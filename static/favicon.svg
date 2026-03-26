@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Background rounded rectangle (ID badge shape) -->
+  <rect x="15" y="10" width="70" height="80" rx="8" fill="#1e88e5" stroke="#0d47a1" stroke-width="2"/>
+
+  <!-- Badge clip/holder at top -->
+  <rect x="42" y="5" width="16" height="8" rx="2" fill="#0d47a1"/>
+
+  <!-- Person icon (head) -->
+  <circle cx="50" cy="35" r="12" fill="#ffffff"/>
+
+  <!-- Person icon (body) -->
+  <path d="M 50 50 Q 35 50 32 65 L 68 65 Q 65 50 50 50 Z" fill="#ffffff"/>
+
+  <!-- Identity lines (representing claims/data) -->
+  <rect x="25" y="72" width="50" height="3" rx="1.5" fill="#bbdefb"/>
+  <rect x="25" y="79" width="35" height="3" rx="1.5" fill="#bbdefb"/>
+</svg>

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign In - Federated Identity & Claims Analyzer</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+    <style>
+        :root { font-size: 87.5%; }
+        main.container { max-width: 1400px; }
+        .login-wrapper { max-width: 600px; }
+        .card { padding: 2rem; border: var(--pico-card-border); border-radius: var(--pico-card-border-radius); background: var(--pico-card-background-color); }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <div class="login-wrapper">
+            <hgroup>
+                <h1>Federated Identity & Claims Analyzer</h1>
+                <p>Sign in to access the test console.</p>
+            </hgroup>
+
+            <div class="card">
+                {% if login_error %}
+                    <article style="background-color: #ffebee; border-color: #ef9a9a;">
+                        <strong>Login error:</strong> {{ login_error }}
+                    </article>
+                {% endif %}
+
+                <p>Sign in with your organizational account.</p>
+                <a href="/azure/oidc/login" role="button">Sign in</a>
+            </div>
+
+            <footer style="margin-top: 2rem; text-align: center;">
+                <small>Version: {{ app_version }}</small>
+            </footer>
+        </div>
+    </main>
+</body>
+</html>

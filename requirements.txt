@@ -1,0 +1,6 @@
+flask
+python-dotenv
+python3-saml
+requests
+python-jose[cryptography]
+gunicorn

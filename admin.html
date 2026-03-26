@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Federated Identity & Claims Analyzer</title>
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+    <style>
+        :root { font-size: 87.5%; }
+        main.container { max-width: 1400px; }
+        .admin-wrapper { max-width: 900px; }
+        textarea { min-height: 220px; }
+        .muted { color: var(--pico-muted-color); }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <div class="admin-wrapper">
+            <hgroup>
+                <h1>Admin</h1>
+                <p>Manage Google OIDC allowlist</p>
+            </hgroup>
+
+            {% if admin_error %}
+                <article style="background-color: #ffebee; border-color: #ef9a9a;">
+                    <strong>Error:</strong> {{ admin_error }}
+                </article>
+            {% endif %}
+
+            {% if admin_message %}
+                <article style="background-color: #e8f5e9; border-color: #a5d6a7;">
+                    <strong>{{ admin_message }}</strong>
+                </article>
+            {% endif %}
+
+            <form method="post">
+                <label for="allowed_emails">Allowed Emails (one per line or comma-separated)</label>
+                <textarea id="allowed_emails" name="allowed_emails" spellcheck="false">{{ allowed_emails_text }}</textarea>
+                <p class="muted">Source: {{ allowlist_source }}</p>
+                <button type="submit">Save Allowlist</button>
+                <a href="/" role="button" class="secondary">Back to App</a>
+            </form>
+        </div>
+    </main>
+</body>
+</html>
