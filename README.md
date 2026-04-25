@@ -1,6 +1,24 @@
+> **Full-stack identity testing platform — when an SSO flow is
+> misbehaving, this is what I reach for to get ground truth on JWTs,
+> SAML assertions, and federation metadata across providers.**
+
 # Federated Identity & Claims Analyzer
 
 A comprehensive web application for testing and analyzing federated identity protocols (OIDC and SAML) across multiple identity providers.
+
+---
+
+### About this repo
+
+This is a sanitized snapshot of internal tooling, published via an
+automated review-and-publish pipeline. Internal identifiers
+(subscription IDs, resource group names, internal hostnames, email
+addresses) are deliberately replaced with placeholders like
+`your-subscription-id`, `your-acr-name`, and `your-org`. Replace
+these with values appropriate to your environment when adapting
+the code.
+
+---
 
 ## Overview
 
