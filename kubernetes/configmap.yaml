@@ -6,4 +6,4 @@ metadata:
     app: federated-claims-analyzer
 data:
   # Production URL with HTTPS
-  APP_BASE_URL: "https://federated-claims-analyser.yourdomain.com"
+  APP_BASE_URL: "https://federated-claims-analyser.ussenate.dev"

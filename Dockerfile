@@ -1,7 +1,7 @@
 # Dockerfile for Federated Identity & Claims Analyzer
 # Optimized for Kubernetes deployment
 
-FROM python:3.11-slim
+FROM my-acr.azurecr.io/python:3.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

@@ -14,10 +14,10 @@ spec:
   ingressClassName: nginx
   tls:
   - hosts:
-    - federated-claims-analyser.yourdomain.com
+    - federated-claims-analyser.ussenate.dev
     secretName: federated-claims-analyzer-tls
   rules:
-  - host: federated-claims-analyser.yourdomain.com
+  - host: federated-claims-analyser.ussenate.dev
     http:
       paths:
       - path: /

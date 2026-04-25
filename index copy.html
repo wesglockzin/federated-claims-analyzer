@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Federated Identity & Claims Analyzer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"/>
+    <style>
+        :root { font-size: 87.5%; }
+        main.container { max-width: 1400px; }
+        .grid { grid-template-columns: 1fr 2fr; gap: 2rem; }
+        details { background-color: var(--pico-card-background-color); border: var(--pico-card-border); padding: var(--pico-card-padding); border-radius: var(--pico-card-border-radius); margin-bottom: 1rem; }
+        pre { white-space: pre-wrap; word-wrap: break-word; background-color: var(--pico-code-background-color); padding: 1rem; }
+        
+        /* Updated Footer Styling */
+        footer { 
+            text-align: center; 
+            font-size: 0.9em; 
+            color: var(--pico-muted-color); 
+            margin-top: 2rem; 
+            padding-bottom: 1.5rem;
+            border-top: 1px solid var(--pico-muted-border-color);
+            padding-top: 1rem;
+        }
+        footer a { color: var(--pico-muted-color); text-decoration: underline; cursor: pointer; }
+        footer a:hover { color: var(--pico-primary); }
+        
+        .hidden { display: none; }
+        
+        .env-switch { 
+            display: flex; 
+            margin-bottom: 1.5rem; 
+            background: var(--pico-card-background-color); 
+            border-radius: var(--pico-border-radius); 
+            overflow: hidden; 
+            border: 1px solid var(--pico-muted-border-color); 
+        }
+        
+        .env-switch label { 
+            flex: 1; 
+            text-align: center; 
+            cursor: pointer; 
+            margin-bottom: 0; 
+            font-weight: bold; 
+            padding: 0; 
+        }
+        
+        .env-switch input { display: none; }
+        
+        .env-switch label span { 
+            display: flex; 
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            height: 100%;
+            padding: 1rem; 
+            transition: background-color 0.2s, color 0.2s;
+        }
+        
+        .env-switch input:checked + span { 
+            background-color: var(--pico-primary-background); 
+            color: var(--pico-primary-inverse); 
+        }
+
+        .mermaid {
+            background-color: white; 
+            padding: 1rem;
+            border-radius: var(--pico-border-radius);
+            margin-bottom: 1rem;
+            text-align: center;
+        }
+
+        [data-theme="dark"] .mermaid { background-color: #1e2327; }
+    </style>
+</head>
+<body>
+    <main class="container">
+        
+        <hgroup>
+            <h1>Federated Identity & Claims Analyzer</h1>
+            <p>A utility for validating Okta and ADFS integrations</p>
+        </hgroup>
+
+        {% if message %}
+            <article style="background-color: {{ color | default('var(--pico-card-background-color)') }}; text-align: center;">{{ message }}</article>
+        {% endif %}
+
+        <div class="grid">
+            <article>
+                <form action="/run_test" method="post" id="tester-form">
+                    <fieldset>
+                        <legend>Target Environment</legend>
+                        <div class="env-switch">
+                            <label>
+                                <input type="radio" name="environment" value="DEV" {% if not selected_env or selected_env == 'DEV' %}checked{% endif %}>
+                                <span>Development (DEV)</span>
+                            </label>
+                            <label>
+                                <input type="radio" name="environment" value="PROD" {% if selected_env == 'PROD' %}checked{% endif %}>
+                                <span>Production (PROD)</span>
+                            </label>
+                        </div>
+                    </fieldset>
+
+                    <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 1rem;">
+                        <fieldset>
+                            <legend>Identity Provider</legend>
+                            <label><input type="radio" name="idp_choice" value="okta" {% if not idp_choice or idp_choice == 'okta' %}checked{% endif %}> Okta</label>
+                            <label><input type="radio" name="idp_choice" value="adfs" {% if idp_choice == 'adfs' %}checked{% endif %}> ADFS</label>
+                        </fieldset>
+                        
+                        <fieldset>
+                            <legend>SSO Protocol</legend>
+                            <label><input type="radio" name="protocol_choice" value="oidc" {% if not protocol_choice or protocol_choice == 'oidc' %}checked{% endif %}> OpenID Connect (OIDC)</label>
+                            <label><input type="radio" name="protocol_choice" value="saml" {% if protocol_choice == 'saml' %}checked{% endif %}> SAML 2.0</label>
+                        </fieldset>
+                    </div>
+
+                    <fieldset id="auth-server-fieldset" class="hidden">
+                        <legend>Authorization Server (DEV Only)</legend>
+                        <label><input type="radio" name="auth_server_type" value="custom" {% if not auth_server_type or auth_server_type == 'custom' %}checked{% endif %}> Custom Auth Server</label>
+                        <label><input type="radio" name="auth_server_type" value="default" {% if auth_server_type == 'default' %}checked{% endif %}> Org Auth Server (default)</label>
+                    </fieldset>
+
+                    <label for="target_app">Target Application
+                        <select id="target_app" name="target_app">
+                        </select>
+                    </label>
+                    
+                    <button type="submit">Run Test</button>
+                </form>
+            </article>
+            
+            <div>
+                <hgroup>
+                    <h2>Results</h2>
+                    {% if test_timestamp %}
+                        <p><small>Test Timestamp: {{ test_timestamp }}</small></p>
+                    {% endif %}
+                </hgroup>
+
+                {% if oidc_error or saml_error or oidc_imp_claims or saml_imp_claims or refreshed_access_token or refresh_error %}
+                    {% if protocol_choice == 'oidc' %}
+                        <details open><summary>Authentication Flow Visual (OIDC)</summary>
+                            <div class="mermaid">
+                                sequenceDiagram
+                                    participant Client as App / Client
+                                    participant IdP as {% if idp_choice == 'adfs' %}ADFS{% else %}Okta ({% if auth_server_type == 'default' %}Org{% else %}Custom{% endif %} AS){% endif %}
+                                    participant AD as Active Directory / UD
+
+                                    Client->>IdP: 1. Request /authorize
+                                    activate IdP
+                                    IdP->>AD: 2. Fetch User Profile
+                                    activate AD
+                                    Note right of AD: (objectGUID, objectSID)
+                                    AD-->>IdP: User Profile Data
+                                    deactivate AD
+                                    
+                                    IdP-->>Client: 3. Auth Code Issued
+                                    deactivate IdP
+
+                                    Client->>IdP: 4. Exchange /token
+                                    activate IdP
+                                    Note over IdP: 5. Mint Tokens
+                                    
+                                    {% if oidc_error %}
+                                        IdP--xClient: 6. Exchange Failed
+                                        deactivate IdP
+                                    {% else %}
+                                        IdP-->>Client: 6. Return Tokens
+                                        deactivate IdP
+                                        {% if idp_choice == 'adfs' %}
+                                        Note left of Client: ID Token (JWT)<br/>Access Token (JWT)<br/>Refresh Token
+                                        {% else %}
+                                        Note left of Client: ID Token (JWT)<br/>Access Token (Opaque)<br/>Refresh Token
+                                        {% endif %}
+
+                                        Client->>IdP: 7. {% if idp_choice == 'okta' %}(Mandatory){% else %}(Optional){% endif %} /userinfo
+                                        activate IdP
+                                        IdP-->>Client: 8. Identity Metadata
+                                        deactivate IdP
+                                    {% endif %}
+                            </div>
+                        </details>
+
+                        <details><summary>Authorization Response (PKCE)</summary>
+                            {% if code_verifier and code_challenge %}
+                                <ul>
+                                    <li><strong>Code Verifier:</strong> <code>{{ code_verifier }}</code></li>
+                                    <li><strong>Code Challenge:</strong> <code>{{ code_challenge }}</code></li>
+                                </ul>
+                            {% else %}
+                                <p style="padding: 0 var(--pico-card-padding);">Not applicable for this test.</p>
+                            {% endif %}
+                        </details>
+
+                        <details><summary>Access Token</summary>
+                            {% if access_imp_claims %}
+                                <ul>{% for key, value in access_imp_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul>
+                                {% if access_det_claims %}<details><summary>Show technical claims</summary><ul>{% for key, value in access_det_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul></details>{% endif %}
+                            {% else %}
+                                <p style="padding: 0 var(--pico-card-padding);">Access Token claims were not available or the token was opaque.</p>
+                            {% endif %}
+                        </details>
+
+                        <details><summary>ID Token Claims</summary>
+                             {% if oidc_imp_claims %}
+                                <ul>{% for key, value in oidc_imp_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul>
+                                {% if oidc_det_claims %}<details><summary>Show technical claims</summary><ul>{% for key, value in oidc_det_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul></details>{% endif %}
+                            {% else %}
+                                <p style="padding: 0 var(--pico-card-padding);">ID Token was not provided by the IdP.</p>
+                            {% endif %}
+                        </details>
+                        
+                        <details><summary>UserInfo Response</summary>
+                             {% if userinfo_imp_claims %}
+                                <ul>{% for key, value in userinfo_imp_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul>
+                                {% if userinfo_det_claims %}<details><summary>Show technical claims</summary><ul>{% for key, value in userinfo_det_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul></details>{% endif %}
+                            {% else %}
+                                <p style="padding: 0 var(--pico-card-padding);">UserInfo response was not available.</p>
+                            {% endif %}
+                        </details>
+
+                        <details><summary>Refresh Token</summary>
+                            {% if raw_refresh_token %}
+                                <div class="mermaid">
+                                    sequenceDiagram
+                                        participant Client as App / Client
+                                        participant IdP as {% if idp_choice == 'adfs' %}ADFS{% else %}Okta{% endif %}
+                                        Note over Client, IdP: Session Expired / Requesting New Access Token
+                                        Client->>IdP: 1. POST /token (grant_type=refresh_token)
+                                        activate IdP
+                                        Note over IdP: Validate Refresh Token<br/>and Client Secret
+                                        IdP-->>Client: 2. New Access Token Issued
+                                        deactivate IdP
+                                        Note left of Client: Success: Session Extended
+                                </div>
+                                <p style="padding: 0 var(--pico-card-padding);">A refresh token was received, enabling the application to request new access tokens without user interaction.</p>
+                                <form action="/refresh_token" method="post" style="margin: 1rem var(--pico-card-padding) 0;">
+                                    <button type="submit">Test Token Refresh</button>
+                                </form>
+                            {% else %}
+                                <p style="padding: 0 var(--pico-card-padding);">Refresh Token was not provided by the IdP.</p>
+                            {% endif %}
+                        </details>
+
+                        {% if refreshed_access_token or refresh_error %}
+                            <details open><summary>Token Refresh Results</summary>
+                                {% if refresh_error %}
+                                    <h5>Refresh Error</h5><p>{{ refresh_error }}</p>
+                                {% else %}
+                                    <h5>Refresh Successful</h5>
+                                    {% if refreshed_access_token %}<p><strong>New Access Token:</strong></p><pre><code>{{ refreshed_access_token }}</code></pre>{% endif %}
+                                    {% if refreshed_id_token %}<p><strong>New ID Token:</strong></p><pre><code>{{ refreshed_id_token }}</code></pre>{% endif %}
+                                {% endif %}
+                            </details>
+                        {% endif %}
+
+                    {% elif protocol_choice == 'saml' %}
+                        <details open><summary>Authentication Flow Visual (SAML)</summary>
+                            <div class="mermaid">
+                                sequenceDiagram
+                                    participant Browser
+                                    participant SP as Senate SSO Tester (SP)
+                                    participant IdP as {% if idp_choice == 'adfs' %}ADFS{% else %}Okta{% endif %}
+
+                                    Browser->>SP: 1. Request Test
+                                    activate SP
+                                    SP->>Browser: 2. 302 Redirect (AuthnRequest)
+                                    deactivate SP
+                                    
+                                    Browser->>IdP: 3. Authenticate
+                                    activate IdP
+                                    IdP-->>Browser: 4. 200 OK (HTML Auto-POST Form)
+                                    deactivate IdP
+
+                                    Browser->>SP: 5. POST SAMLResponse (Assertion)
+                                    activate SP
+                                    Note over SP: Validate Signature<br/>Check Audience/Issuer
+                                    
+                                    {% if saml_error %}
+                                        SP--xBrowser: 6. Validation Failed
+                                        deactivate SP
+                                    {% else %}
+                                        SP-->>Browser: 6. Success / Show Claims
+                                        deactivate SP
+                                    {% endif %}
+                            </div>
+                        </details>
+
+                        <details><summary>SAML Claims</summary>
+                            <ul>{% for key, value in saml_imp_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul>
+                            {% if saml_det_claims %}<details><summary>Show technical claims</summary><ul>{% for key, value in saml_det_claims.items() %}<li><strong>{{ key }}:</strong> {{ value }}</li>{% endfor %}</ul></details>{% endif %}
+                            {% if raw_saml_xml %}<details><summary>Show Raw SAML Assertion</summary><pre><code>{{ raw_saml_xml | e }}</code></pre></details>{% endif %}
+                        </details>
+                    {% endif %}
+                    
+                    {% if oidc_error %}<article><h5>OIDC Processing Error:</h5><p>{{ oidc_error }}</p></article>{% endif %}
+                    {% if saml_error %}<article><h5>SAML Processing Error:</h5><p>{{ saml_error }}</p></article>{% endif %}
+                {% else %}
+                    <p>Run a test to see results here.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <footer>
+            <p>The Federated Identity & Claims Analyzer is a web-based utility designed for testing and validating Single Sign-On configurations for both Okta and ADFS.</p>
+            <p>
+                Version: {{ app_version }} | 
+                Theme: <a href="#" data-theme-switcher="light">Light</a> / <a href="#" data-theme-switcher="dark">Dark</a> | 
+                Contact: <a href="mailto:wes.glockzin@gmail.com">wes.glockzin@gmail.com</a>
+            </p>
+        </footer>
+    </main>
+
+    <script>
+        const themeSwitcher = {
+            init() { 
+                // Updated selector to target footer links
+                this.links = document.querySelectorAll("footer a[data-theme-switcher]"); 
+                this.theme = this.getTheme(); 
+                this.setTheme(this.theme); 
+                this.links.forEach(link => { 
+                    link.addEventListener("click", e => { 
+                        e.preventDefault(); 
+                        const theme = e.target.getAttribute("data-theme-switcher"); 
+                        this.setTheme(theme); 
+                    }); 
+                }); 
+            },
+            getTheme() { return localStorage.getItem("theme") || "light"; },
+            setTheme(theme) { 
+                document.documentElement.setAttribute("data-theme", theme); 
+                localStorage.setItem("theme", theme); 
+                this.theme = theme; 
+            }
+        };
+
+        const formLogic = {
+            configMap: {
+                DEV: {
+                    oidc: [ { label: "Default OIDC App (DEV)", value: "default" } ],
+                    saml: [ 
+                        { label: "SAML Test App #1 (DEV)", value: "dev" }, 
+                        { label: "CUCM (DEV)", value: "cucm" } 
+                    ]
+                },
+                PROD: {
+                    oidc: [ { label: "Default OIDC App (PROD)", value: "default" } ],
+                    saml: [ 
+                        { label: "SAML Test App #1 (PROD)", value: "prod" }
+                    ]
+                }
+            },
+            init() { 
+                this.form = document.getElementById('tester-form');
+                this.targetSelect = document.getElementById('target_app');
+                this.authServerFieldset = document.getElementById('auth-server-fieldset');
+                this.lastSelectedApp = "{{ selected_target_app | default('') }}"; 
+
+                this.form.addEventListener('change', (e) => {
+                    if (e.target.name === 'environment' || e.target.name === 'protocol_choice' || e.target.name === 'idp_choice') {
+                        this.updateTargetOptions();
+                        this.updateAuthServerVisibility();
+                    }
+                });
+                
+                this.updateTargetOptions();
+                this.updateAuthServerVisibility();
+            },
+            updateAuthServerVisibility() {
+                const env = document.querySelector('input[name="environment"]:checked').value;
+                const idp = document.querySelector('input[name="idp_choice"]:checked').value;
+                const protocol = document.querySelector('input[name="protocol_choice"]:checked').value;
+                
+                // Show only for DEV + Okta + OIDC
+                if (env === 'DEV' && idp === 'okta' && protocol === 'oidc') {
+                    this.authServerFieldset.classList.remove('hidden');
+                } else {
+                    this.authServerFieldset.classList.add('hidden');
+                }
+            },
+            updateTargetOptions() { 
+                const env = document.querySelector('input[name="environment"]:checked').value;
+                const protocol = document.querySelector('input[name="protocol_choice"]:checked').value;
+                this.targetSelect.innerHTML = '';
+                const options = this.configMap[env][protocol];
+                options.forEach(opt => {
+                    const el = document.createElement('option');
+                    el.value = opt.value;
+                    el.textContent = opt.label;
+                    if (opt.value === this.lastSelectedApp) {
+                        el.selected = true;
+                    }
+                    this.targetSelect.appendChild(el);
+                });
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', function() {
+            themeSwitcher.init();
+            formLogic.init();
+        });
+    </script>
+
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true });
+    </script>
+</body>
+</html>

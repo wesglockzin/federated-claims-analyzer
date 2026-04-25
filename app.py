@@ -29,16 +29,31 @@ else:
     if CONFIG_PATH.exists():
         load_dotenv(dotenv_path=CONFIG_PATH)
 
+def env_flag(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+AUTH_GATE_ENABLED = env_flag("APP_AUTH_GATE_ENABLED", True)
+FORCE_FRESH_LOGIN_DEFAULT = env_flag("FORCE_FRESH_LOGIN_DEFAULT", True)
+
 REQUIRED_SECRETS = [
     "OKTA_DEV_OIDC_SECRET",
     "ADFS_DEV_CLIENT_SECRET",
     "ADFS_PROD_CLIENT_SECRET",
-    "FLASK_SECRET_KEY",
-    "AZURE_OIDC_CLIENT_ID",
-    "AZURE_OIDC_CLIENT_SECRET",
-    "AZURE_OIDC_TENANT_ID"
+    "FLASK_SECRET_KEY"
 ]
-# Optional check for PROD secret
+if AUTH_GATE_ENABLED:
+    REQUIRED_SECRETS.extend([
+        "AZURE_OIDC_CLIENT_ID",
+        "AZURE_OIDC_CLIENT_SECRET",
+        "AZURE_OIDC_TENANT_ID"
+    ])
+# Optional checks for STG and PROD secrets
+if "OKTA_STG_OIDC_SECRET" not in os.environ:
+    print("⚠️  WARNING: OKTA_STG_OIDC_SECRET is missing. Staging Okta OIDC tests will fail.")
 if "OKTA_PROD_OIDC_SECRET" not in os.environ:
     print("⚠️  WARNING: OKTA_PROD_OIDC_SECRET is missing. Production Okta OIDC tests will fail.")
 
@@ -55,6 +70,8 @@ import sso_tester_logic
 logger = sso_tester_logic.logger
 ADFS_ENVIRONMENTS = sso_tester_logic.ADFS_ENVIRONMENTS
 OKTA_ENVIRONMENTS = sso_tester_logic.OKTA_ENVIRONMENTS
+logger.info(f"App auth gate enabled: {AUTH_GATE_ENABLED}")
+logger.info(f"Force fresh login default: {FORCE_FRESH_LOGIN_DEFAULT}")
 
 app = Flask(__name__, template_folder='.', static_folder='static')
 app.secret_key = os.environ["FLASK_SECRET_KEY"]
@@ -93,7 +110,7 @@ def add_security_headers(response):
     # Allow inline styles for Pico CSS and scripts for AJAX
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "font-src 'self' https://cdn.jsdelivr.net; "
         "img-src 'self' data:; "
@@ -104,6 +121,8 @@ def add_security_headers(response):
 
 @app.before_request
 def require_login():
+    if not AUTH_GATE_ENABLED:
+        return
     if request.path.startswith("/static/"):
         return
     if request.path in PUBLIC_PATHS:
@@ -136,6 +155,8 @@ def get_full_template_context():
         'okta_environments': sso_tester_logic.OKTA_ENVIRONMENTS,
         'adfs_environments': sso_tester_logic.ADFS_ENVIRONMENTS,
         'user_email': user_email,
+        'force_fresh_login': FORCE_FRESH_LOGIN_DEFAULT,
+        'auth_gate_enabled': AUTH_GATE_ENABLED,
     }
 
 def process_and_split_claims(claims_dict):
@@ -167,6 +188,8 @@ def index():
 
 @app.route("/login")
 def login():
+    if not AUTH_GATE_ENABLED:
+        return redirect(url_for("index"))
     if session.get("user"):
         return redirect(url_for("index"))
     next_url = request.args.get("next")
@@ -180,6 +203,8 @@ def login():
 
 @app.route("/azure/oidc/login")
 def azure_oidc_login():
+    if not AUTH_GATE_ENABLED:
+        return redirect(url_for("index"))
     auth_url, state, code_verifier, code_challenge = sso_tester_logic.run_azure_oidc_flow()
     if not auth_url:
         session["login_error"] = "Azure AD OIDC discovery failed. Check network access and configuration."
@@ -191,6 +216,8 @@ def azure_oidc_login():
 
 @app.route("/azure/oidc/callback")
 def azure_oidc_callback():
+    if not AUTH_GATE_ENABLED:
+        return redirect(url_for("index"))
     error = request.args.get("error")
     error_description = request.args.get("error_description", "")
     if error:
@@ -235,7 +262,9 @@ def azure_oidc_callback():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    if AUTH_GATE_ENABLED:
+        return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 @app.route("/run_test", methods=["POST"])
 def run_test():
@@ -248,6 +277,7 @@ def run_test():
     protocol_choice = request.form.get("protocol_choice") # oidc or saml
     target_app = request.form.get("target_app") # e.g. 'default', 'dev', 'prod', 'cucm'
     auth_server_type = request.form.get("auth_server_type", "custom") # custom or default
+    force_fresh_login = request.form.get("force_fresh_login", "1").lower() in {"1", "true", "yes", "on"}
     
     auth_url = None
     
@@ -257,7 +287,8 @@ def run_test():
         'idp_choice': idp_choice,
         'protocol_choice': protocol_choice,
         'target_app': target_app,
-        'auth_server_type': auth_server_type
+        'auth_server_type': auth_server_type,
+        'force_fresh_login': force_fresh_login
     }
 
     if protocol_choice == 'oidc':
@@ -273,13 +304,13 @@ def run_test():
                 okta_config = env_config.get(auth_server_type, env_config.get("custom"))
                 session['okta_env_key'] = env_key
                 session['auth_server_type'] = auth_server_type
-                auth_url, state, code_verifier, code_challenge = sso_tester_logic.run_okta_oidc_flow(okta_config, auth_server_type)
+                auth_url, state, code_verifier, code_challenge = sso_tester_logic.run_okta_oidc_flow(okta_config, auth_server_type, force_fresh_login=force_fresh_login)
         elif idp_choice == 'adfs':
             adfs_base_url = ADFS_ENVIRONMENTS.get(env_key)
             if adfs_base_url:
                 session['adfs_env_key'] = env_key
                 session['adfs_issuer'] = adfs_base_url
-                auth_url, state, code_verifier, code_challenge = sso_tester_logic.run_adfs_oidc_flow(adfs_base_url, env_key)
+                auth_url, state, code_verifier, code_challenge = sso_tester_logic.run_adfs_oidc_flow(adfs_base_url, env_key, force_fresh_login=force_fresh_login)
         
         if state:
             session['oauth_state'] = state
@@ -296,7 +327,7 @@ def run_test():
         session['saml_idp_key'] = idp_key
         
         try:
-            auth_url = sso_tester_logic.run_sp_initiated_saml_flow(request, idp_key)
+            auth_url = sso_tester_logic.run_sp_initiated_saml_flow(request, idp_key, force_fresh_login=force_fresh_login)
         except Exception as e:
             logger.error(f"Error generating SAML request for {idp_key}: {e}")
             auth_url = None
@@ -309,7 +340,7 @@ def run_test():
         return response
     else:
         context = get_full_template_context()
-        context.update({'message': 'Failed to generate auth URL.', 'color': '#dc3545', 'selected_env': environment, 'idp_choice': idp_choice, 'protocol_choice': protocol_choice, 'selected_target_app': target_app, 'auth_server_type': auth_server_type})
+        context.update({'message': 'Failed to generate auth URL.', 'color': '#dc3545', 'selected_env': environment, 'idp_choice': idp_choice, 'protocol_choice': protocol_choice, 'selected_target_app': target_app, 'auth_server_type': auth_server_type, 'force_fresh_login': force_fresh_login})
         return render_template('index.html', **context)
 
 @app.route("/check_token_lifetimes", methods=["POST"])
@@ -365,8 +396,8 @@ def okta_saml_callback():
         session['last_result'] = result_data
         context = get_full_template_context()
         ui = session.get('ui_context', {})
-        context.update({'message': webpage_message, 'color': webpage_color, 'saml_error': saml_error, **result_data, 'idp_choice': 'okta', 'protocol_choice': 'saml', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'test_timestamp': test_timestamp})
-        return render_template('index.html', **context)
+        context.update({'message': webpage_message, 'color': webpage_color, 'saml_error': saml_error, **result_data, 'idp_choice': 'okta', 'protocol_choice': 'saml', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'force_fresh_login': ui.get('force_fresh_login', FORCE_FRESH_LOGIN_DEFAULT), 'test_timestamp': test_timestamp})
+    return render_template('index.html', **context)
 
 @app.route("/adfs/saml/callback", methods=['POST'])
 def adfs_saml_callback():
@@ -389,8 +420,8 @@ def adfs_saml_callback():
         session['last_result'] = result_data
         context = get_full_template_context()
         ui = session.get('ui_context', {})
-        context.update({'message': webpage_message, 'color': webpage_color, 'saml_error': saml_error, **result_data, 'idp_choice': 'adfs', 'protocol_choice': 'saml', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'test_timestamp': test_timestamp})
-        return render_template('index.html', **context)
+        context.update({'message': webpage_message, 'color': webpage_color, 'saml_error': saml_error, **result_data, 'idp_choice': 'adfs', 'protocol_choice': 'saml', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'force_fresh_login': ui.get('force_fresh_login', FORCE_FRESH_LOGIN_DEFAULT), 'test_timestamp': test_timestamp})
+    return render_template('index.html', **context)
 
 @app.route("/okta/oidc/callback")
 def okta_oidc_callback():
@@ -440,8 +471,8 @@ def okta_oidc_callback():
         session['last_result'] = result_data
         context = get_full_template_context()
         ui = session.get('ui_context', {})
-        context.update({'message': webpage_message, 'color': webpage_color, 'oidc_error': oidc_error, **result_data, 'idp_choice': 'okta', 'protocol_choice': 'oidc', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'test_timestamp': test_timestamp})
-        return render_template('index.html', **context)
+        context.update({'message': webpage_message, 'color': webpage_color, 'oidc_error': oidc_error, **result_data, 'idp_choice': 'okta', 'protocol_choice': 'oidc', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'force_fresh_login': ui.get('force_fresh_login', FORCE_FRESH_LOGIN_DEFAULT), 'test_timestamp': test_timestamp})
+    return render_template('index.html', **context)
 
 @app.route("/adfs/oidc/callback")
 def adfs_oidc_callback():
@@ -489,8 +520,8 @@ def adfs_oidc_callback():
         session['last_result'] = result_data
         context = get_full_template_context()
         ui = session.get('ui_context', {})
-        context.update({'message': webpage_message, 'color': webpage_color, 'oidc_error': oidc_error, **result_data, 'idp_choice': 'adfs', 'protocol_choice': 'oidc', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'test_timestamp': test_timestamp})
-        return render_template('index.html', **context)
+        context.update({'message': webpage_message, 'color': webpage_color, 'oidc_error': oidc_error, **result_data, 'idp_choice': 'adfs', 'protocol_choice': 'oidc', 'selected_env': ui.get('environment'), 'selected_target_app': ui.get('target_app'), 'auth_server_type': ui.get('auth_server_type', 'custom'), 'force_fresh_login': ui.get('force_fresh_login', FORCE_FRESH_LOGIN_DEFAULT), 'test_timestamp': test_timestamp})
+    return render_template('index.html', **context)
 
 @app.route("/refresh_token", methods=['POST'])
 def refresh_token():
@@ -530,10 +561,11 @@ def refresh_token():
             'selected_env': ui.get('environment') if ui else list(OKTA_ENVIRONMENTS.keys())[0],
             'selected_target_app': ui.get('target_app') if ui else 'default',
             'auth_server_type': ui.get('auth_server_type', 'custom'),
+            'force_fresh_login': ui.get('force_fresh_login', FORCE_FRESH_LOGIN_DEFAULT),
             'test_timestamp': test_timestamp
         })
         context.update(refresh_result_data)
-        return render_template('index.html', **context)
+    return render_template('index.html', **context)
 
 if __name__ == "__main__":
     logger.info("--- Starting Federated Identity & Claims Analyzer Web UI ---")

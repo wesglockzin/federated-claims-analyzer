@@ -1,124 +1,93 @@
 # Federated Identity & Claims Analyzer
 
-**v7.0.1** — Python/Flask web app for testing and analyzing federated identity protocols. Built for SSO debugging during a large-scale enterprise ADFS → Okta migration.
+A comprehensive web application for testing and analyzing federated identity protocols (OIDC and SAML) across multiple identity providers.
 
----
+## Overview
 
-## The Problem
+This tool allows you to:
+- Test OIDC and SAML authentication flows with Okta, ADFS, and Azure AD
+- Inspect ID tokens, access tokens, and refresh tokens
+- View decoded JWT claims and SAML assertions
+- Check token lifetimes and refresh token behavior
+- Analyze authentication traces and troubleshoot SSO issues
 
-Debugging federated identity failures is slow. When SSO breaks — wrong claims, expired tokens, misconfigured SAML assertions, PKCE failures — you need to see exactly what the IdP returned and why. Browser dev tools get you partway there, but decoding JWTs, validating SAML signatures, checking JWKS, and tracing the full OAuth 2.0 flow requires tooling that doesn't exist out of the box.
+## Current Deployment
 
-This tool closes that gap. It runs full authentication flows against real IdPs and surfaces every token, claim, and assertion in a readable UI — so you can see exactly what the IdP issued, not what you expected it to issue.
-
----
-
-## What It Does
-
-Full authentication flow testing and token inspection for OIDC and SAML 2.0.
-
-**OIDC (OAuth 2.0):**
-- Full authorization code flow with PKCE
-- ID token, access token, and refresh token decoding
-- JWT claim inspection (important claims separated from standard technical claims)
-- Token refresh flow testing
-- UserInfo endpoint queries
-- Token lifetime validation
-- JWKS caching (1-hour TTL)
-
-**SAML 2.0:**
-- SP-initiated SSO flows
-- SAML assertion decoding and display
-- Signature validation
-- Attribute mapping inspection
-
-**Multi-IdP support:**
-- Okta DEV and PROD (custom and default authorization servers)
-- ADFS DEV and PROD
-- Azure AD / Entra ID (used as the application login gate)
-- Token Lifetime Check (TLC) — query Okta token lifetime settings without triggering a full SSO flow
-
----
+**Platform**: Azure Container Apps
+**URL**: https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io
+**Authentication**: Azure AD (Entra ID) - All users in the tenant are authorized
 
 ## Architecture
 
-- **Runtime**: Python 3.11 / Flask / Gunicorn (2 workers, 4 threads)
-- **Platform**: Azure Container Apps — automatic HTTPS, auto-scaling 0–2 replicas, managed certificates
-- **Auth gate**: Azure AD OIDC — all tenant users authorized, no allowlist required
-- **Sessions**: Flask signed cookie sessions (multi-worker safe, no filesystem or shared storage dependencies)
-- **Secrets**: Azure Container Apps secrets injected as environment variables
-- **Timeouts**: 10s HTTP timeout on all IdP requests
-- **Security headers**: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, XSS protection
-- **Container**: Non-root user, HTTPS-only in production
-- **OIDC endpoints**: Re-discovered on each callback for multi-worker safety
+- **Runtime**: Python 3.11
+- **Web Framework**: Flask with Gunicorn (2 workers, 4 threads per worker)
+- **Authentication**: Azure AD OIDC for application access
+- **Session Storage**: Flask signed cookie sessions (multi-instance safe)
+- **Secrets Management**: Azure Container Apps secrets (injected as environment variables)
+- **Deployment**: Docker container on Azure Container Apps with automatic HTTPS
 
----
+## Features
 
-## Deployment History
+### Supported Identity Providers
 
-| Version | Platform | Notes |
-|---------|----------|-------|
-| v4.0 | Google Cloud Run | Google OIDC gate + Firestore allowlist |
-| v6.0 | Azure Kubernetes Service (AKS) | Azure AD OIDC gate, removed GCP dependencies |
-| v7.0 | Azure Container Apps | ~$150/mo → ~$20/mo (87% cost reduction) |
+1. **Okta** (DEV and PROD environments)
+   - OIDC with custom and default authorization servers
+   - SAML 2.0
+   - Token Lifetime Check (TLC) - query access/refresh token lifetimes without SSO
 
----
+2. **ADFS** (DEV and PROD environments)
+   - OIDC
+   - SAML 2.0
 
-## Configuration Required
+3. **Azure AD** (Entra ID)
+   - OIDC (used for application login gate)
 
-This tool requires IdP-specific configuration to function. It is not a generic plug-and-play demo — it was built for a specific enterprise environment and will exit at startup if required secrets are missing.
+### Authentication Protocols
 
-### Required environment variables
+- **OIDC**: Full OAuth 2.0 authorization code flow with PKCE
+- **SAML 2.0**: SP-initiated flows with signature validation
 
-```
-FLASK_SECRET_KEY
-AZURE_OIDC_CLIENT_ID
-AZURE_OIDC_CLIENT_SECRET
-AZURE_OIDC_TENANT_ID
-OKTA_DEV_OIDC_SECRET
-OKTA_PROD_OIDC_SECRET         # optional — PROD Okta tests will fail without it
-ADFS_DEV_CLIENT_SECRET
-ADFS_PROD_CLIENT_SECRET
-SAML_TESTER_CERT              # PEM-encoded SP certificate
-SAML_TESTER_KEY               # PEM-encoded SP private key
-```
+### Token Analysis
 
-### Setup steps
-
-1. Copy `env.config.template` to `env.config` and fill in your IdP credentials:
-   - Okta: client ID, client secret, org domain, authorization server ID
-   - ADFS: client ID, client secret, ADFS hostname
-   - Azure AD: tenant ID, client ID, client secret (for the login gate)
-
-2. Update `saml_settings.py` with your IdP's SAML metadata (SSO URLs, entity IDs, x509 certificates).
-
-3. Register redirect URIs in each IdP application:
-   - Azure AD OIDC: `/azure/oidc/callback`
-   - Okta OIDC: `/okta/oidc/callback`
-   - Okta SAML: `/okta/saml/callback`
-   - ADFS OIDC: `/adfs/oidc/callback`
-   - ADFS SAML: `/adfs/saml/callback`
-
-4. See `AZURE_AD_SETUP.md` for Azure Container Apps deployment walkthrough.
-
----
+- ID Token validation with JWKS
+- Access Token validation (when JWT format)
+- Refresh Token support with token refresh functionality
+- UserInfo endpoint queries
+- SAML assertion parsing and attribute extraction
 
 ## Deployment
 
-```bash
-# Build and deploy to Azure Container Apps
-./deploy.sh
-```
+### Azure Container Apps
+
+Current deployment uses Azure Container Apps for:
+- Automatic HTTPS with managed certificates
+- Automatic scaling (0-2 replicas based on load)
+- No infrastructure management
+- Cost optimization (~$10-30/month vs ~$150/month for AKS)
+
+#### Build and Deploy
 
 ```bash
-# First-time Azure resource provisioning
-./setup-azure.sh
+# Build image in Azure Container Registry
+az acr build --registry my-acr \
+  --image federated-claims-analyzer:latest \
+  --file Dockerfile .
+
+# Update Container App
+az containerapp update \
+  --name federated-claims-analyzer \
+  --resource-group my-resource-group \
+  --image my-acr.azurecr.io/federated-claims-analyzer:latest
 ```
 
+#### Configure Secrets
+
+All secrets are managed via Azure Container Apps secrets:
+
 ```bash
-# Configure secrets in Azure Container Apps
 az containerapp secret set \
   --name federated-claims-analyzer \
-  --resource-group federated-claims-rg \
+  --resource-group my-resource-group \
   --secrets \
     flask-secret-key='<secret>' \
     azure-oidc-client-id='<client-id>' \
@@ -126,63 +95,121 @@ az containerapp secret set \
     azure-oidc-tenant-id='<tenant-id>' \
     okta-dev-oidc-secret='<secret>' \
     okta-prod-oidc-secret='<secret>' \
+    okta-dev-api-token='<token>' \
+    okta-prod-api-token='<token>' \
     adfs-dev-client-secret='<secret>' \
     adfs-prod-client-secret='<secret>' \
     saml-tester-cert='<cert-pem>' \
     saml-tester-key='<key-pem>'
 ```
 
-### Local development
+### Local Development
 
 ```bash
+# Install dependencies
 pip install -r requirements.txt
-# Add credentials to env.config (see env.config.template)
+
+# Set environment variables (copy from env.config.DO_NOT_SHARE)
+export FLASK_SECRET_KEY='...'
+export AZURE_OIDC_CLIENT_ID='...'
+# ... etc
+
+# Run locally
 python app.py
-# or
+
+# Or with gunicorn
 gunicorn --bind 0.0.0.0:8080 --workers 2 --threads 4 app:app
 ```
 
-### Smoke tests
+### Pre-Deployment Smoke Tests
 
-Run before deploying to catch import errors, missing dependencies, and missing environment variables:
+Run smoke tests before deploying:
 
 ```bash
 python smoke_test.py
 ```
 
----
+Tests include:
+- Python syntax and imports
+- Dependency verification
+- Flask app instantiation
+- Azure environment detection
+- Required environment variables
+- Documentation file validation
 
-## Troubleshooting
+## Configuration
 
-**Multi-worker issues**: OIDC endpoint discovery is re-run on each callback. Endpoints discovered in Worker 1 are not available in Worker 2 — this is handled automatically.
+### Identity Provider Endpoints
 
-**Large session cookies**: SAML responses can push session cookies close to the ~4KB browser limit. This is expected behavior.
+All IdP endpoints are configured in `sso_tester_logic.py`:
 
-**SAML certificate errors**: SAML certs are loaded from Azure Container Apps secrets and written to `/tmp/` at startup. Ensure `SAML_TESTER_CERT` and `SAML_TESTER_KEY` are configured.
+- **Okta DEV**: `https://login-dev.example.gov` or `https://dev-your-org.okta.com`
+- **Okta PROD**: `https://login.example.gov`
+- **ADFS DEV**: `https://adfs-dev.example.gov/adfs`
+- **ADFS PROD**: `https://adfs.example.gov/adfs`
 
----
+### Redirect URIs
+
+Configure these redirect URIs in your IdP applications:
+
+- **Azure AD OIDC**: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io/azure/oidc/callback`
+- **Okta OIDC**: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io/okta/oidc/callback`
+- **Okta SAML**: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io/okta/saml/callback`
+- **ADFS OIDC**: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io/adfs/oidc/callback`
+- **ADFS SAML**: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io/adfs/saml/callback`
+
+## Version History
+
+- **v7.0** (2026-02-05): Migrated from AKS to Azure Container Apps
+- **v6.0** (2026-02-04): Migrated from Google Cloud Run to AKS with Azure AD authentication
+- **v5.1** (2026-01-30): Security hardening with HTTP headers and SAML cert fix
+- **v5.0** (2026-01-30): Operational robustness (smoke tests, timeouts, logging, JWKS caching)
+- **v4.3** (2026-01-30): Flask cookie sessions and Secret Manager for SAML certs
+- **v4.2** (2026-01-30): Google Cloud Secret Manager migration
+- **v4.1** (2026-01-30): TLC integration and favicon
+- **v4.0** (2026-01-20): Google OIDC gate with Firestore allowlist
 
 ## Documentation
 
-- [`AZURE_AD_SETUP.md`](AZURE_AD_SETUP.md) — Azure Container Apps deployment and Azure AD app registration walkthrough
-- [`SESSION_NOTES.md`](SESSION_NOTES.md) — Detailed change log and session history
-- [`AGENTS.md`](AGENTS.md) — Project rules for file management and versioning
-- [`Dockerfile`](Dockerfile) — Production container configuration
-- [`env.config.template`](env.config.template) — Environment variable reference
+- [AGENTS.md](AGENTS.md) - Project rules for file management and versioning
+- [AZURE_AD_SETUP.md](AZURE_AD_SETUP.md) - Azure AD App Registration setup guide
+- [SESSION_NOTES.md](SESSION_NOTES.md) - Detailed session history and change log
+- [Dockerfile](Dockerfile) - Production container configuration
 
----
+## Security Features
 
-## Status
+- Non-root container user
+- Signed cookie sessions (no filesystem dependencies)
+- Azure Container Apps managed secrets
+- Comprehensive security headers (HSTS, CSP, X-Frame-Options, etc.)
+- HTTPS-only in production
+- PKCE for OIDC flows
+- SAML signature validation
 
-Production — actively used for SSO troubleshooting and identity migration validation during a large-scale enterprise ADFS → Okta migration.
+## Troubleshooting
 
----
+### Multi-Worker Issues
 
-## Related
+The application runs with 2 gunicorn workers. OIDC endpoint discovery is re-run on each callback to ensure multi-worker safety (endpoints discovered in Worker 1 are available in Worker 2).
 
-- [saml-metadata-parser](../saml-metadata-parser) — Parse and inspect SAML IdP metadata files
-- [adfs-okta-migration-tool](../adfs-okta-migration-tool) — Tooling for ADFS → Okta migration workflows
+### Large Session Cookies
 
----
+Session cookies may exceed browser limits (~4KB) with large SAML responses. This is expected and browsers handle it gracefully.
 
-Author: Wes Glockzin | License: MIT
+### SAML Certificate Errors
+
+SAML certificates are loaded from Azure Container Apps secrets and written to `/tmp/` at startup. Ensure `SAML_TESTER_CERT` and `SAML_TESTER_KEY` secrets are properly configured.
+
+## License
+
+MIT License
+
+## Author
+
+Wes Glockzin
+
+<!-- CODEX_WORK_UPDATE_START -->
+## Codex Work Participation Update (2026-03-20)
+- Performed a repository-wide Markdown refresh to keep documentation aligned.
+- Added/updated this note during the current maintenance task.
+<!-- CODEX_WORK_UPDATE_END -->

@@ -4,7 +4,7 @@
 cd "$(dirname "$0")"
 source env.config
 
-PROJECT_ID="your-gcp-project-id"
+PROJECT_ID="saml-meta-parser"
 
 # Function to create or update secret
 create_secret() {

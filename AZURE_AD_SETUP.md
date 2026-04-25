@@ -6,7 +6,7 @@ This guide walks you through creating an Azure AD (Entra ID) App Registration to
 
 - Azure tenant with admin or Application Administrator permissions
 - Azure Container Apps deployment (or know your application URL)
-- Current deployment URL: `https://YOUR_APP_NAME.YOUR_REGION.azurecontainerapps.io`
+- Current deployment URL: `https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io`
 
 ## Step 1: Create App Registration
 
@@ -74,7 +74,7 @@ Configure these secrets in your Container App:
 ```bash
 az containerapp secret set \
   --name federated-claims-analyzer \
-  --resource-group federated-claims-rg \
+  --resource-group my-resource-group \
   --secrets \
     azure-oidc-client-id='<Application (client) ID>' \
     azure-oidc-tenant-id='<Directory (tenant) ID>' \
@@ -95,3 +95,9 @@ https://<YOUR-APP-URL>/azure/oidc/callback
 If your Ingress URL changes, update the Redirect URI in Azure:
 1. App registrations → Your app → **Authentication**
 2. Edit or add the new Redirect URI
+
+<!-- CODEX_WORK_UPDATE_START -->
+## Codex Work Participation Update (2026-03-20)
+- Performed a repository-wide Markdown refresh to keep documentation aligned.
+- Added/updated this note during the current maintenance task.
+<!-- CODEX_WORK_UPDATE_END -->

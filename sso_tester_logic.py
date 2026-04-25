@@ -26,7 +26,7 @@ import xml.dom.minidom
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 import saml_settings
 
-APP_VERSION = "7.0.1"
+APP_VERSION = "7.2.0"
 
 # --- Base Directory ---
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -43,32 +43,40 @@ LOG_FILEPATH = LOG_DIRECTORY / LOG_FILENAME
 
 # --- ADFS Environment Presets ---
 ADFS_ENVIRONMENTS = {
-    "DEV": "https://adfs-dev.example.com/adfs",
-    "PROD": "https://adfs.example.com/adfs"
+    "DEV": "https://adfs-dev.example.gov/adfs",
+    "PROD": "https://adfs.example.gov/adfs"
 }
 
 # --- Okta Environment Configuration (Nested for Auth Server Toggle) ---
 OKTA_ENVIRONMENTS = {
     "DEV": {
         "custom": {
-            "oidc_issuer_url": "https://YOUR_OKTA_DEV_DOMAIN.okta.com/oauth2/YOUR_AUTH_SERVER_ID",
-            "oidc_client_id": os.environ.get("OKTA_DEV_CLIENT_ID", "YOUR_OKTA_DEV_CLIENT_ID"),
+            "oidc_issuer_url": "https://dev-your-org.okta.com/oauth2/aus192v0np74vqcQ50j7",
+            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_DEV_OIDC_SECRET", ""),
-            "oidc_audience": "https://YOUR_OKTA_DEV_DOMAIN.okta.com/oauth2/YOUR_AUTH_SERVER_ID",
+            "oidc_audience": "https://dev-your-org.okta.com/oauth2/aus192v0np74vqcQ50j7",
         },
         "default": {
-            "oidc_issuer_url": "https://idp-dev.example.com/oauth2/default",
-            "oidc_client_id": os.environ.get("OKTA_DEV_CLIENT_ID", "YOUR_OKTA_DEV_CLIENT_ID"),
+            "oidc_issuer_url": "https://login-dev.example.gov/oauth2/default",
+            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_DEV_OIDC_SECRET", ""),
             "oidc_audience": "api://default",
         },
     },
+    "STG": {
+        "custom": {
+            "oidc_issuer_url": "https://login-lab.example.gov",
+            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
+            "oidc_client_secret": os.environ.get("OKTA_STG_OIDC_SECRET", ""),
+            "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
+        },
+    },
     "PROD": {
         "custom": {
-            "oidc_issuer_url": "https://idp.example.com",
-            "oidc_client_id": os.environ.get("OKTA_PROD_CLIENT_ID", "YOUR_OKTA_PROD_CLIENT_ID"),
+            "oidc_issuer_url": "https://login.example.gov",
+            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_PROD_OIDC_SECRET", ""),
-            "oidc_audience": os.environ.get("OKTA_PROD_CLIENT_ID", "YOUR_OKTA_PROD_CLIENT_ID"),
+            "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
         },
     },
 }
@@ -81,11 +89,11 @@ OKTA_OIDC_AUTH_ENDPOINT, OKTA_OIDC_TOKEN_ENDPOINT, OKTA_OIDC_JWKS_URI, OKTA_OIDC
 # --- ADFS OIDC Configuration ---
 ADFS_OIDC_CONFIGS = {
     "DEV": {
-        "client_id": os.environ.get("ADFS_CLIENT_ID", "YOUR_ADFS_CLIENT_ID"),
+        "client_id": "00000000-0000-0000-0000-000000000000",
         "client_secret": os.environ.get("ADFS_DEV_CLIENT_SECRET", "")
     },
     "PROD": {
-        "client_id": os.environ.get("ADFS_CLIENT_ID", "YOUR_ADFS_CLIENT_ID"),
+        "client_id": "00000000-0000-0000-0000-000000000000",
         "client_secret": os.environ.get("ADFS_PROD_CLIENT_SECRET", "")
     }
 }
@@ -516,10 +524,10 @@ def prepare_saml_request(request, idp_key):
     auth = OneLogin_Saml2_Auth(saml_req_data, settings)
     return auth
 
-def run_sp_initiated_saml_flow(request, idp_key):
+def run_sp_initiated_saml_flow(request, idp_key, force_fresh_login=True):
     logger.info(f"--- SAML SP-Initiated Flow Initialized for {idp_key} ---")
     auth = prepare_saml_request(request, idp_key)
-    return auth.login()
+    return auth.login(force_authn=force_fresh_login)
 
 def process_saml_response(request, idp_key):
     logger.info("SAML: --- Processing and Validating SAML Response ---")
@@ -541,26 +549,32 @@ def process_saml_response(request, idp_key):
     return {"claims": claims, "raw_xml": raw_xml}
 
 # --- Test Execution Flow Functions (OIDC part) ---
-def run_okta_oidc_flow(okta_config, auth_server_type="custom"):
+def run_okta_oidc_flow(okta_config, auth_server_type="custom", force_fresh_login=True):
     logger.info(f"--- Okta OIDC Client Test Initiated (Auth Server: {auth_server_type}) ---")
     if not okta_oidc_get_endpoints(okta_config["oidc_issuer_url"]):
         return None, None, None, None
     state = os.urandom(16).hex()
     code_verifier, code_challenge = generate_pkce_pair()
-    auth_params = { "response_type": "code", "client_id": okta_config["oidc_client_id"], "redirect_uri": OKTA_OIDC_REDIRECT_URI, "scope": OKTA_OIDC_SCOPES, "state": state, "prompt": "login", "max_age": 0, "code_challenge": code_challenge, "code_challenge_method": "S256" }
+    auth_params = { "response_type": "code", "client_id": okta_config["oidc_client_id"], "redirect_uri": OKTA_OIDC_REDIRECT_URI, "scope": OKTA_OIDC_SCOPES, "state": state, "code_challenge": code_challenge, "code_challenge_method": "S256" }
+    if force_fresh_login:
+        auth_params["prompt"] = "login"
+        auth_params["max_age"] = 0
     authorization_url = f"{OKTA_OIDC_AUTH_ENDPOINT}?{urlencode(auth_params)}"
-    logger.info(f"Okta OIDC: Generated authorization URL for redirect with PKCE (using {auth_server_type} auth server).")
+    logger.info(f"Okta OIDC: Generated authorization URL for redirect with PKCE (using {auth_server_type} auth server, force_fresh_login={force_fresh_login}).")
     return authorization_url, state, code_verifier, code_challenge
 
-def run_adfs_oidc_flow(adfs_base_url, adfs_env_key):
+def run_adfs_oidc_flow(adfs_base_url, adfs_env_key, force_fresh_login=True):
     logger.info(f"--- ADFS OIDC Client Test Initiated on {adfs_base_url} ---")
     if not adfs_oidc_get_endpoints(adfs_base_url): return None, None, None, None
     state = os.urandom(16).hex()
     client_id = ADFS_OIDC_CONFIGS[adfs_env_key]["client_id"]
     code_verifier, code_challenge = generate_pkce_pair()
-    auth_params = { "response_type": "code", "client_id": client_id, "redirect_uri": ADFS_OIDC_REDIRECT_URI, "scope": ADFS_OIDC_SCOPES, "state": state, "prompt": "login", "max_age": 0, "code_challenge": code_challenge, "code_challenge_method": "S256" }
+    auth_params = { "response_type": "code", "client_id": client_id, "redirect_uri": ADFS_OIDC_REDIRECT_URI, "scope": ADFS_OIDC_SCOPES, "state": state, "code_challenge": code_challenge, "code_challenge_method": "S256" }
+    if force_fresh_login:
+        auth_params["prompt"] = "login"
+        auth_params["max_age"] = 0
     authorization_url = f"{ADFS_OIDC_AUTH_ENDPOINT}?{urlencode(auth_params)}"
-    logger.info("ADFS OIDC: Generated authorization URL for redirect with PKCE.")
+    logger.info(f"ADFS OIDC: Generated authorization URL for redirect with PKCE (force_fresh_login={force_fresh_login}).")
     return authorization_url, state, code_verifier, code_challenge
 
 def run_azure_oidc_flow():
@@ -638,12 +652,16 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
         auth_server_id = "default"
 
     # Determine base URL for API calls
-    if "YOUR_OKTA_DEV_DOMAIN.okta.com" in issuer_url:
-        base_url = "https://YOUR_OKTA_DEV_DOMAIN.okta.com"
-    elif "idp-dev.example.com" in issuer_url:
-        base_url = "https://idp-dev.example.com"
-    elif "idp.example.com" in issuer_url:
-        base_url = "https://idp.example.com"
+    if "dev-your-org.okta.com" in issuer_url:
+        base_url = "https://dev-your-org.okta.com"
+    elif "login-dev.example.gov" in issuer_url:
+        base_url = "https://login-dev.example.gov"
+    elif "staging-your-org.okta.com" in issuer_url:
+        base_url = "https://staging-your-org.okta.com"
+    elif "login-lab.example.gov" in issuer_url:
+        base_url = "https://login-lab.example.gov"
+    elif "login.example.gov" in issuer_url:
+        base_url = "https://login.example.gov"
     else:
         error_msg = f"Could not determine base URL from issuer: {issuer_url}"
         logger.error(error_msg)

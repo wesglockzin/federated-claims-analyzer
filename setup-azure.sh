@@ -22,7 +22,7 @@ set -e
 # ============================================
 RESOURCE_GROUP="federated-claims-analyzer-rg"
 LOCATION="eastus"
-ACR_NAME="federatedclaimsacr"  # Must be globally unique, lowercase, alphanumeric only
+ACR_NAME="my-acr"  # Must be globally unique, lowercase, alphanumeric only
 AKS_CLUSTER="federated-claims-aks"
 APP_NAME="Federated Identity Claims Analyzer"
 INGRESS_HOST="federated-claims-analyzer.yourdomain.com"  # UPDATE THIS
