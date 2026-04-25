@@ -43,8 +43,8 @@ LOG_FILEPATH = LOG_DIRECTORY / LOG_FILENAME
 
 # --- ADFS Environment Presets ---
 ADFS_ENVIRONMENTS = {
-    "DEV": "https://adfs-dev.example.gov/adfs",
-    "PROD": "https://adfs.example.gov/adfs"
+    "DEV": "https://host.example.gov/[redacted-path]
+    "PROD": "https://host.example.gov/[redacted-path]
 }
 
 # --- Okta Environment Configuration (Nested for Auth Server Toggle) ---
@@ -57,7 +57,7 @@ OKTA_ENVIRONMENTS = {
             "oidc_audience": "https://dev-your-org.okta.com/oauth2/aus192v0np74vqcQ50j7",
         },
         "default": {
-            "oidc_issuer_url": "https://login-dev.example.gov/oauth2/default",
+            "oidc_issuer_url": "https://host.example.gov/[redacted-path]
             "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_DEV_OIDC_SECRET", ""),
             "oidc_audience": "api://default",
@@ -65,7 +65,7 @@ OKTA_ENVIRONMENTS = {
     },
     "STG": {
         "custom": {
-            "oidc_issuer_url": "https://login-lab.example.gov",
+            "oidc_issuer_url": "https://host.example.gov",
             "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_STG_OIDC_SECRET", ""),
             "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
@@ -73,7 +73,7 @@ OKTA_ENVIRONMENTS = {
     },
     "PROD": {
         "custom": {
-            "oidc_issuer_url": "https://login.example.gov",
+            "oidc_issuer_url": "https://host.example.gov",
             "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
             "oidc_client_secret": os.environ.get("OKTA_PROD_OIDC_SECRET", ""),
             "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
@@ -655,13 +655,13 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
     if "dev-your-org.okta.com" in issuer_url:
         base_url = "https://dev-your-org.okta.com"
     elif "login-dev.example.gov" in issuer_url:
-        base_url = "https://login-dev.example.gov"
+        base_url = "https://host.example.gov"
     elif "staging-your-org.okta.com" in issuer_url:
         base_url = "https://staging-your-org.okta.com"
     elif "login-lab.example.gov" in issuer_url:
-        base_url = "https://login-lab.example.gov"
+        base_url = "https://host.example.gov"
     elif "login.example.gov" in issuer_url:
-        base_url = "https://login.example.gov"
+        base_url = "https://host.example.gov"
     else:
         error_msg = f"Could not determine base URL from issuer: {issuer_url}"
         logger.error(error_msg)

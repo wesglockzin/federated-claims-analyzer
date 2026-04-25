@@ -40,7 +40,7 @@ IDP_CONFIGS = {
     "okta_dev": {
         "entityId": "http://www.okta.com/exk158mkgksNtCrSE0j7",
         "singleSignOnService": {
-            "url": "https://login-dev.example.gov/app/dev-senate_samltesterapp_1/exk158mkgksNtCrSE0j7/sso/saml"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIDpDCCAoygAwIBAgIGAZg9zhbAMA0GCSqGSIb3DQEBCwUAMIGSMQswCQYDVQQGEwJVUzETMBEG
@@ -66,7 +66,7 @@ T60aBV/DZYno+5i5YPARBZbLtb8hPm5D
     "okta_stg": {
         "entityId": "http://www.okta.com/exk1k05a9b7hUhwKT0j7",
         "singleSignOnService": {
-            "url": "https://login-lab.example.gov/app/staging-senate_samltestapp1_1/exk1k05a9b7hUhwKT0j7/sso/saml"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIDrDCCApSgAwIBAgIGAZy/wsDbMA0GCSqGSIb3DQEBCwUAMIGWMQswCQYDVQQGEwJVUzETMBEG
@@ -92,7 +92,7 @@ EZxcaPNr4GejYPgN3dki78+dn1N9e75us0WY1jAx0xY=
     "okta_prod": {
         "entityId": "http://www.okta.com/exk1fiyrqm281w9n40j7",
         "singleSignOnService": {
-            "url": "https://login.example.gov/app/senate_samltestapp1_1/exk1fiyrqm281w9n40j7/sso/saml"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIDnDCCAoSgAwIBAgIGAZszV484MA0GCSqGSIb3DQEBCwUAMIGOMQswCQYDVQQGEwJVUzETMBEG
@@ -118,7 +118,7 @@ u9P8Nt31YILodG7o7bpv7g==
     "okta_cucm": {
         "entityId": "http://www.okta.com/exk1akh82ekyCeCGH0j7", 
         "singleSignOnService": {
-            "url": "https://login-dev.example.gov/app/dev-senate_cucmdev_1/exk1akh82ekyCeCGH0j7/sso/saml"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIDpDCCAoygAwIBAgIGAZmgyCuJMA0GCSqGSIb3DQEBCwUAMIGSMQswCQYDVQQGEwJVUzETMBEG
@@ -142,9 +142,9 @@ JGAQqPdDFWLkbQ63Y5zQXBmwF7qqbEly2ku4xvbsqaGz13DFJtdP2NZ9SFv0W+6PQbU2V/2/N7A1
     },
     # --- Existing ADFS Configurations (SAML Test App #1) ---
     "adfs_dev": {
-        "entityId": "http://adfs-dev.example.gov/adfs/services/trust",
+        "entityId": "https://host.example.gov/[redacted-path]
         "singleSignOnService": {
-            "url": "https://adfs-dev.example.gov/adfs/ls/"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIC3jCCAcagAwIBAgIQRUVr983eX5tCKvV0aJlHrDANBgkqhkiG9w0BAQsFADAr
@@ -166,9 +166,9 @@ PNa6Z8z3EgLbD2GlfTQ4iccW
 -----END CERTIFICATE-----"""
     },
     "adfs_prod": {
-        "entityId": "http://adfs.example.gov/adfs/services/trust",
+        "entityId": "https://host.example.gov/[redacted-path]
         "singleSignOnService": {
-            "url": "https://adfs.example.gov/adfs/ls/"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIC2jCCAcKgAwIBAgIQQVnPw1Yk+L1N/g7DMmOOAjANBgkqhkiG9w0BAQsFADAp
@@ -191,9 +191,9 @@ G6qXTEW4GkbJxL4byMI=
     },
     # --- NEW ADFS CUCM SAML Configuration ---
     "adfs_cucm": {
-        "entityId": "https://cucm.example.gov/ssosp/saml/metadata", 
+        "entityId": "https://host.example.gov/[redacted-path] 
         "singleSignOnService": {
-            "url": "https://adfs-dev.example.gov/adfs/ls/"
+            "url": "https://host.example.gov/[redacted-path]
         },
         "x509cert": """-----BEGIN CERTIFICATE-----
 MIIC3jCCAcagAwIBAgIQRUVr983eX5tCKvV0aJlHrDANBgkqhkiG9w0BAQsFADAr

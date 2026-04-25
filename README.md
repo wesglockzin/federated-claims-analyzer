@@ -161,10 +161,10 @@ Tests include:
 
 All IdP endpoints are configured in `sso_tester_logic.py`:
 
-- **Okta DEV**: `https://login-dev.example.gov` or `https://dev-your-org.okta.com`
-- **Okta PROD**: `https://login.example.gov`
-- **ADFS DEV**: `https://adfs-dev.example.gov/adfs`
-- **ADFS PROD**: `https://adfs.example.gov/adfs`
+- **Okta DEV**: `https://host.example.gov` or `https://dev-your-org.okta.com`
+- **Okta PROD**: `https://host.example.gov`
+- **ADFS DEV**: `https://host.example.gov/[redacted-path]
+- **ADFS PROD**: `https://host.example.gov/[redacted-path]
 
 ### Redirect URIs
 
