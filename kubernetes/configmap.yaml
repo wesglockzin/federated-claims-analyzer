@@ -1,9 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: federated-claims-analyzer-config
-  labels:
-    app: federated-claims-analyzer
-data:
-  # Production URL with HTTPS
-  APP_BASE_URL: "https://federated-claims-analyser.ussenate.dev"
