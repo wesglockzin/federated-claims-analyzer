@@ -6,6 +6,8 @@
 
 A comprehensive web application for testing and analyzing federated identity protocols (OIDC and SAML) across multiple identity providers.
 
+![Federated Identity & Claims Analyzer — successful Okta OIDC flow with full claims breakdown](screenshots/oidc-flow-results.png)
+
 ---
 
 ### About this repo
