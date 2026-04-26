@@ -137,23 +137,26 @@ STANDARD_CLAIMS = {
 # Cloud/Kubernetes best practice: Log to stdout/stderr (captured by logging infrastructure)
 # Only use file logging in local development
 IS_CLOUD_OR_K8S = bool(os.environ.get('K_SERVICE') or os.environ.get('KUBERNETES_SERVICE_HOST'))
+# IS_CLOUD adds Azure Container Apps detection. Kept separate from
+# IS_CLOUD_OR_K8S until SAML cert env-var loading is verified on ACA.
+IS_CLOUD = IS_CLOUD_OR_K8S or bool(os.environ.get('CONTAINER_APP_NAME'))
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 if logger.hasHandlers():
     logger.handlers.clear()
 
-# File logging: Only in local dev (Cloud Run has ephemeral filesystem)
-if not IS_CLOUD_OR_K8S:
+# File logging: Only in local dev (cloud platforms have ephemeral filesystems)
+if not IS_CLOUD:
     if not os.path.exists(LOG_DIRECTORY):
         os.makedirs(LOG_DIRECTORY)
     file_handler = logging.FileHandler(LOG_FILEPATH, mode='a')
     file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     logger.addHandler(file_handler)
 
-# Stdout logging: Always enabled (Cloud Run captures this)
+# Stdout logging: Always enabled (cloud platforms capture stdout)
 stream_handler = logging.StreamHandler(sys.stdout)
-if IS_CLOUD_OR_K8S:
+if IS_CLOUD:
     # Structured format for Cloud Logging
     stream_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
 else:

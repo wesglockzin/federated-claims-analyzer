@@ -99,8 +99,8 @@ def add_security_headers(response):
     # Prevent clickjacking attacks
     response.headers['X-Frame-Options'] = 'DENY'
 
-    # Force HTTPS (only in Cloud Run or Kubernetes, not local dev with self-signed certs)
-    if os.environ.get('K_SERVICE') or os.environ.get('KUBERNETES_SERVICE_HOST'):
+    # Force HTTPS (only in cloud, not local dev with self-signed certs)
+    if os.environ.get('K_SERVICE') or os.environ.get('KUBERNETES_SERVICE_HOST') or os.environ.get('CONTAINER_APP_NAME'):
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
 
     # XSS Protection (legacy header, but still good to have)
