@@ -64,7 +64,7 @@ runs; the configuration values are not. Replace them with your own.
 | `index.html`, `login.html` | Templates (served from the app directory) |
 | `HOWTO.md` | In-app help, rendered at `/howto` |
 | `smoke_test.py` | Pre-deploy static checks and post-deploy reachability checks |
-| `Dockerfile`, `deploy.sh` | Container build and Azure Container Apps deploy |
+| `Dockerfile` | Container image (gunicorn, 2 workers × 4 threads) |
 
 ## Routes
 
@@ -120,9 +120,10 @@ cp env.config.template env.config   # fill in values
 python app.py                       # HTTPS on :8080 using the SP keypair as the dev cert
 ```
 
-Deployment is Azure Container Apps via `deploy.sh` (ACR build → `az
-containerapp update`), gunicorn with 2 workers × 4 threads. `smoke_test.py`
-runs static checks before the build and reachability checks after.
+Deployment is Azure Container Apps. Images are built and promoted by the
+fleet's shared scripts — build → DEV, then a digest-gated DEV → PROD
+promotion — rather than by a per-tool deploy script. `smoke_test.py` runs
+static checks before a build and reachability checks after.
 
 ## Known limitations
 
