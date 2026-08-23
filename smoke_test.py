@@ -138,9 +138,8 @@ def check_structure() -> bool:
         "saml_settings.py":    50,
         "requirements.txt":    10,
         "Dockerfile":          10,
-        "deploy.sh":           10,
-        "AGENTS.md":           20,
-        "SESSION_NOTES.md":    20,
+        "README.md":           20,
+        "HOWTO.md":            20,
     }
     issues = []
     for name, min_bytes in required.items():
