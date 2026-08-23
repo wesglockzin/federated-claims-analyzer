@@ -1,0 +1,53 @@
+# Dockerfile for Federated Identity & Claims Analyzer
+# Optimized for Kubernetes deployment
+
+FROM your-acr-name.azurecr.io/python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8080
+
+# Install system dependencies required for python3-saml (xmlsec1)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libxml2-dev \
+    libxmlsec1-dev \
+    libxmlsec1-openssl \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better layer caching
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Change ownership to non-root user
+# OpenShift (restricted-v2 SCC) runs an ARBITRARY UID in GID 0 and ignores
+# USER — chown alone leaves /app unreadable there and gunicorn dies at import.
+# g=u makes group permissions mirror owner permissions (covers the
+# logs/federated_claims_analyzer.log FileHandler write at import). No-op on ACA.
+RUN chown -R appuser:appuser /app && chgrp -R 0 /app && chmod -R g=u /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import requests; requests.get('http://localhost:8080/login', timeout=5)" || exit 1
+
+# Run with gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--threads", "4", "--timeout", "120", "app:app"]
