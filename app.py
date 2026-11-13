@@ -534,7 +534,7 @@ def okta_saml_callback():
             "#28a745",
         )
     except Exception as e:
-        logger.exception("Okta SAML Callback Error: %s", e)
+        logger.exception("Okta SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ Okta SAML Error!",
             "#dc3545",
@@ -587,7 +587,7 @@ def adfs_saml_callback():
             "#28a745",
         )
     except Exception as e:
-        logger.exception("ADFS SAML Callback Error: %s", e)
+        logger.exception("ADFS SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ ADFS SAML Error!",
             "#dc3545",
@@ -715,7 +715,7 @@ def okta_oidc_callback():
 
         webpage_message, webpage_color = "✅ Okta OIDC Flow Completed!", "#28a745"
     except Exception as e:
-        logger.exception("Okta OIDC Callback Error: %s", e)
+        logger.exception("Okta OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ Okta OIDC Error!",
             "#dc3545",
@@ -841,7 +841,7 @@ def adfs_oidc_callback():
 
         webpage_message, webpage_color = "✅ ADFS OIDC Flow Completed!", "#28a745"
     except Exception as e:
-        logger.exception("ADFS OIDC Callback Error: %s", e)
+        logger.exception("ADFS OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ ADFS OIDC Error!",
             "#dc3545",
@@ -911,7 +911,7 @@ def refresh_token():
         refresh_result_data["refreshed_id_token"] = refresh_response.get("id_token")
 
     except Exception as e:
-        logger.exception("Token Refresh Error: %s", e)
+        logger.exception("Token Refresh Error")
         webpage_message, webpage_color, refresh_error = (
             "❌ Token Refresh Failed!",
             "#dc3545",
