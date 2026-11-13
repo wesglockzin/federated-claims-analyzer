@@ -99,9 +99,9 @@ def test_pkce_pair_matches():
 
 def discovery_document(prefix):
     return (
-        '{"authorization_endpoint": "%s/authorize", "token_endpoint": "%s/token",'
-        ' "jwks_uri": "%s/keys", "userinfo_endpoint": "%s/userinfo"}'
-    ) % (prefix, prefix, prefix, prefix)
+        f'{{"authorization_endpoint": "{prefix}/authorize", "token_endpoint": "{prefix}/token",'
+        f' "jwks_uri": "{prefix}/keys", "userinfo_endpoint": "{prefix}/userinfo"}}'
+    )
 
 
 def test_endpoints_of_two_issuers_do_not_overwrite_each_other(monkeypatch):
