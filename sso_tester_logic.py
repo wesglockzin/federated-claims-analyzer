@@ -56,6 +56,7 @@ ADFS_OIDC_REDIRECT_URI = f"{BASE_URL}/adfs/oidc/callback"
 # cannot overwrite each other's endpoints. A worker that has no entry discovers it.
 _endpoints_cache = {}
 
+
 # --- General Configuration ---
 def listen_port(env):
     """The port to listen on: the PORT setting, 8080 when it is not set."""
