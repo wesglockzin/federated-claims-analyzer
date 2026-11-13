@@ -3,8 +3,11 @@
 import json
 import time
 
-import jwt
 import pytest
+from authlib.common.encoding import json_b64encode
+from authlib.jose import JsonWebKey, JsonWebToken
+from authlib.jose.errors import JoseError
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 import sso_tester_logic as logic
@@ -30,7 +33,10 @@ def okta_config():
 @pytest.fixture
 def jwks(private_key, monkeypatch):
     """Serve this test key as the IdP's key set for both issuers."""
-    jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    jwk = JsonWebKey.import_key(public_pem).as_dict()
     jwk.update(kid=KEY_ID, use="sig", alg="RS256")
     keys = {"keys": [jwk]}
     endpoints = {
@@ -57,7 +63,21 @@ def make_token(key, algorithm="RS256", kid=KEY_ID, **overrides):
     }
     claims.update(overrides)
     claims = {name: value for name, value in claims.items() if value is not None}
-    return jwt.encode(claims, key, algorithm=algorithm, headers={"kid": kid})
+    header = {"alg": algorithm, "typ": "JWT"}
+    if kid is not None:
+        header["kid"] = kid
+    if algorithm == "none":
+        # Hand-built unsigned token: header.payload. with an empty signature.
+        return (
+            json_b64encode(header).decode() + "." + json_b64encode(claims).decode() + "."
+        )
+    if algorithm == "RS256":
+        key = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    return JsonWebToken([algorithm]).encode(header, claims, key).decode()
 
 
 def test_okta_id_token_with_correct_claims_is_accepted(jwks, private_key, okta_config):
@@ -100,6 +120,46 @@ def test_okta_id_token_signed_by_another_key_is_refused(jwks, okta_config):
 def test_okta_id_token_with_unknown_key_id_is_refused(jwks, private_key, okta_config):
     token = make_token(private_key, kid="not-in-the-key-set")
     assert logic.okta_oidc_validate_id_token(token, okta_config) is None
+
+
+def test_token_issued_slightly_in_the_future_is_accepted(
+    jwks, private_key, okta_config
+):
+    """A container clock a few seconds behind the IdP must not refuse fresh tokens."""
+    now = int(time.time())
+    token = make_token(private_key, iat=now + 20, nbf=now + 20)
+    assert logic.okta_oidc_validate_id_token(token, okta_config) is not None
+
+
+def test_token_without_key_id_is_tried_against_every_key(
+    jwks, private_key, okta_config
+):
+    other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    other_pem = other.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    other_jwk = JsonWebKey.import_key(other_pem).as_dict()
+    other_jwk.update(kid="other-kid", use="sig", alg="RS256")
+    jwks["keys"].insert(0, other_jwk)
+    token = make_token(private_key, kid=None)
+    assert logic.okta_oidc_validate_id_token(token, okta_config) is not None
+
+
+def test_decode_jwt_raises_a_jose_error_for_a_wrong_algorithm(jwks):
+    token = make_token(HMAC_SECRET, algorithm="HS256")
+    with pytest.raises(JoseError):
+        logic.decode_jwt(token, jwks, audience=CLIENT_ID, issuer=ISSUER)
+
+
+def test_unverified_claims_are_read_without_a_key(private_key):
+    claims = logic.decode_unverified_claims(make_token(private_key))
+    assert claims["sub"] == "test-subject"
+
+
+@pytest.mark.parametrize("token", ["opaque-token", "a.b.c", "a..c"])
+def test_unverified_decode_of_a_non_jwt_raises(token):
+    with pytest.raises(JoseError):
+        logic.decode_unverified_claims(token)
 
 
 def test_okta_id_token_that_is_not_a_jwt_is_refused(jwks, okta_config):

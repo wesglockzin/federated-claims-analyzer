@@ -13,7 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import jwt
+from authlib.jose.errors import JoseError
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from flask import (
@@ -852,16 +852,15 @@ def adfs_oidc_callback():
         if result_data["raw_access_token"]:
             try:
                 imp, det = process_and_split_claims(
-                    jwt.decode(
-                        result_data["raw_access_token"],
-                        options={"verify_signature": False},
+                    sso_tester_logic.decode_unverified_claims(
+                        result_data["raw_access_token"]
                     )
                 )
                 result_data["access_imp_claims"], result_data["access_det_claims"] = (
                     imp,
                     det,
                 )
-            except jwt.PyJWTError:
+            except JoseError:
                 logger.info("ADFS Access Token is not a JWT.")
                 result_data["access_imp_claims"] = {"token_type": "Opaque or non-JWT"}
             imp, det = process_and_split_claims(

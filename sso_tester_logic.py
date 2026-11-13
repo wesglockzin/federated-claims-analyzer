@@ -9,6 +9,7 @@
 
 import base64
 import hashlib
+import json
 import logging
 import os
 import sys
@@ -17,8 +18,10 @@ import xml.dom.minidom
 from pathlib import Path
 from urllib.parse import urlencode
 
-import jwt
 import requests
+from authlib.common.encoding import to_bytes, urlsafe_b64decode
+from authlib.jose import JsonWebKey, JsonWebToken
+from authlib.jose.errors import JoseError
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 
 import idp_config
@@ -275,18 +278,60 @@ def get_jwks_cached(jwks_uri):
         return None
 
 
-def decode_jwt(token, jwks, **checks):
+CLOCK_LEEWAY_SECONDS = 60
+_jwt = JsonWebToken(["RS256"])
+
+
+def decode_jwt(token, jwks, audience, issuer):
     """Verify a token's signature (RS256 only) against a JWKS and return its claims.
 
-    `checks` are PyJWT checks such as audience= and issuer=. Raises
-    jwt.PyJWTError when the token or the key set is not acceptable.
+    Checks the issuer, the audience and the expiry (with a small clock leeway).
+    A token without a key id is tried against every key in the set. Raises
+    authlib.jose.errors.JoseError when the token or the key set is not acceptable.
     """
-    key_id = jwt.get_unverified_header(token).get("kid")
-    keys = jwt.PyJWKSet.from_dict(jwks).keys
-    matching = [k for k in keys if key_id is None or k.key_id == key_id]
+    try:
+        keys = JsonWebKey.import_key_set(jwks).keys
+        header = json.loads(
+            urlsafe_b64decode(to_bytes(str(token).split(".")[0])).decode("utf-8")
+        )
+    except (ValueError, TypeError, AttributeError) as e:
+        raise JoseError(f"Token or key set is malformed: {e}") from e
+    key_id = header.get("kid") if isinstance(header, dict) else None
+    matching = [k for k in keys if key_id is None or k.as_dict().get("kid") == key_id]
     if not matching:
-        raise jwt.PyJWTError("No key in the JWKS matches the token's key id.")
-    return jwt.decode(token, matching[0].key, algorithms=["RS256"], **checks)
+        raise JoseError("No key in the JWKS matches the token's key id.")
+    options = {
+        "iss": {"essential": True, "value": issuer},
+        "aud": {"essential": True, "value": audience},
+        "exp": {"essential": True},
+    }
+    last_error = None
+    for key in matching:
+        try:
+            claims = _jwt.decode(token, key, claims_options=options)
+            claims.validate(leeway=CLOCK_LEEWAY_SECONDS)
+            return dict(claims)
+        except JoseError as e:
+            last_error = e
+        except (ValueError, TypeError) as e:
+            last_error = JoseError(f"Token could not be verified: {e}")
+    raise last_error
+
+
+def decode_unverified_claims(token):
+    """Return a JWT's claims WITHOUT checking the signature (display only).
+
+    Raises authlib.jose.errors.JoseError when the token is not a JWT.
+    """
+    try:
+        payload = json.loads(
+            urlsafe_b64decode(to_bytes(token.split(".")[1])).decode("utf-8")
+        )
+    except (ValueError, TypeError, IndexError, AttributeError) as e:
+        raise JoseError("Token is not a JWT.") from e
+    if not isinstance(payload, dict):
+        raise JoseError("Token payload is not a JSON object.")
+    return payload
 
 
 # --- OIDC Helper Functions ---
@@ -371,7 +416,7 @@ def okta_oidc_validate_id_token(id_token, okta_config):
         )
         logger.info("Okta OIDC: ID Token validation successful!")
         return decoded_token
-    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
+    except (JoseError, requests.exceptions.RequestException) as e:
         logger.error(f"Okta OIDC: ID Token validation failed: {e}")
         return None
 
@@ -391,7 +436,7 @@ def okta_oidc_validate_access_token(access_token, okta_config):
         )
         logger.info("Okta OIDC: Access Token validation successful!")
         return decoded_token
-    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
+    except (JoseError, requests.exceptions.RequestException) as e:
         logger.error(f"Okta OIDC: Access Token validation failed: {e}")
         return None
 
@@ -486,7 +531,7 @@ def adfs_oidc_validate_id_token(id_token, adfs_issuer_url, adfs_env_key):
         )
         logger.info("ADFS OIDC: ID Token validation successful!")
         return decoded_token
-    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
+    except (JoseError, requests.exceptions.RequestException) as e:
         logger.error(f"ADFS OIDC: ID Token validation failed: {e}")
         return None
 

@@ -49,7 +49,7 @@ runs; the configuration values are not. Replace them with your own.
 
 | Path | What is verified |
 |---|---|
-| Okta / ADFS **ID token** | Signature against the IdP's JWKS (`RS256` only), `aud`, `iss`, `exp` — via `PyJWT` |
+| Okta / ADFS **ID token** | Signature against the IdP's JWKS (`RS256` only), `aud`, `iss`, `exp` — via `authlib.jose` |
 | Okta **access token** | Same, when the token is a JWT (custom authorization servers) |
 | **SAML response** | Signature, `strict` mode, `wantAssertionsSigned`, SHA-256 — via `python3-saml` |
 | ADFS **access token** | **Decoded without verification.** ADFS access tokens are opaque to the SP by design; the claims are shown for inspection only and are *not* trustworthy. This is labeled in the code (`verify_signature=False`). |

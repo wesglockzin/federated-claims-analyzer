@@ -155,7 +155,7 @@ The test signs in as YOU, generates real auth events in the IdP's log, and creat
 - **Stack:** Flask + gunicorn, in a container that runs on any container platform
 - **Auth (to use this tool):** OIDC through the tool's own OIDC client (`OIDC_CLIENT_ID`)
 - **SP signing keypair:** `saml_tester.cert` / `saml_tester.key`, mounted into the image at build time
-- **OIDC stack:** `authlib` for IdP-side OAuth, `PyJWT` for JWT validation against the IdP's JWKS
+- **OIDC stack:** `authlib` for IdP-side OAuth and for JWT validation (`authlib.jose`) against the IdP's JWKS
 - **SAML stack:** `python3-saml` (OneLogin's library) for AuthnRequest construction, signature validation, assertion parsing
 - **HTTP identity:** `FederatedClaimsAnalyzer/<APP_VERSION>` UA via `http_session.make_session()` — module-level `_session` reused across all calls in a flow
 - **JWKS caching:** in-memory dict keyed by JWKS URI, 1-hour TTL
