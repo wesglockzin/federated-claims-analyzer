@@ -1,6 +1,5 @@
 """Token validation and SAML response processing, with fakes and no network."""
 
-import json
 import time
 
 import pytest
@@ -69,7 +68,10 @@ def make_token(key, algorithm="RS256", kid=KEY_ID, **overrides):
     if algorithm == "none":
         # Hand-built unsigned token: header.payload. with an empty signature.
         return (
-            json_b64encode(header).decode() + "." + json_b64encode(claims).decode() + "."
+            json_b64encode(header).decode()
+            + "."
+            + json_b64encode(claims).decode()
+            + "."
         )
     if algorithm == "RS256":
         key = key.private_bytes(

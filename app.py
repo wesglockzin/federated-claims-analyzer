@@ -13,8 +13,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from authlib.jose.errors import JoseError
 from authlib.integrations.flask_client import OAuth
+from authlib.jose.errors import JoseError
 from dotenv import load_dotenv
 from flask import (
     Flask,
