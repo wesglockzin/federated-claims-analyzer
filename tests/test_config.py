@@ -87,9 +87,11 @@ def test_api_base_url_is_derived_from_the_issuer():
 
 def test_missing_sp_file_is_logged_and_raised(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(saml_settings, "SCRIPT_DIR", tmp_path)
-    with caplog.at_level(logging.ERROR, logger=saml_settings.logger.name):
-        with pytest.raises(FileNotFoundError):
-            saml_settings.read_file_content("absent.cert")
+    with (
+        caplog.at_level(logging.ERROR, logger=saml_settings.logger.name),
+        pytest.raises(FileNotFoundError),
+    ):
+        saml_settings.read_file_content("absent.cert")
     assert "absent.cert" in caplog.text
 
 
