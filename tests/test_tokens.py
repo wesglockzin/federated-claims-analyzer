@@ -15,7 +15,7 @@ from guards import UserFacingError
 ISSUER = logic.OKTA_ENVIRONMENTS["DEV"]["custom"]["oidc_issuer_url"]
 ADFS_ISSUER = logic.ADFS_ENVIRONMENTS["DEV"]
 CLIENT_ID = "test-client-not-real"
-HMAC_SECRET = "test-hmac-key-not-real-0123456789abcdef"
+HMAC_SECRET = "test-hmackey-not-real-0123456789abcdef"
 KEY_ID = "test-kid"
 
 
