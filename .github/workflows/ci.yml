@@ -32,7 +32,9 @@ jobs:
       - name: Lockfile is current
         run: uv lock --check
       - name: Dependency audit
-        run: pip-audit .
+        # python-jose has no fixed release; every jwt.decode call pins algorithms=["RS256"].
+        # Remove the ignores when a fixed release exists.
+        run: pip-audit . --ignore-vuln GHSA-3qf3-8w2g-rqmx --ignore-vuln PYSEC-2026-4298
 
   gitleaks:
     runs-on: ubuntu-latest
