@@ -25,8 +25,8 @@ from __future__ import annotations
 import argparse
 import py_compile
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,20 +35,32 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # Terminal output helpers
 # ---------------------------------------------------------------------------
 
-GREEN  = "\033[92m"
-RED    = "\033[91m"
+GREEN = "\033[92m"
+RED = "\033[91m"
 YELLOW = "\033[93m"
-RESET  = "\033[0m"
+RESET = "\033[0m"
 
-def _ok(msg: str)   -> None: print(f"{GREEN}✓ {msg}{RESET}")
-def _fail(msg: str) -> None: print(f"{RED}✗ {msg}{RESET}")
-def _warn(msg: str) -> None: print(f"{YELLOW}⚠ {msg}{RESET}")
-def _info(msg: str) -> None: print(f"  {msg}")
+
+def _ok(msg: str) -> None:
+    print(f"{GREEN}✓ {msg}{RESET}")
+
+
+def _fail(msg: str) -> None:
+    print(f"{RED}✗ {msg}{RESET}")
+
+
+def _warn(msg: str) -> None:
+    print(f"{YELLOW}⚠ {msg}{RESET}")
+
+
+def _info(msg: str) -> None:
+    print(f"  {msg}")
 
 
 # ---------------------------------------------------------------------------
 # Pre-deploy checks
 # ---------------------------------------------------------------------------
+
 
 def check_syntax() -> bool:
     """
@@ -86,7 +98,14 @@ def check_requirements() -> bool:
         return False
 
     content = req.read_text().lower()
-    expected = ["flask", "requests", "python3-saml", "gunicorn", "python-dotenv", "authlib"]
+    expected = [
+        "flask",
+        "requests",
+        "python3-saml",
+        "gunicorn",
+        "python-dotenv",
+        "authlib",
+    ]
     missing = [p for p in expected if p not in content]
     if missing:
         _fail(f"pyproject.toml missing entries: {', '.join(missing)}")
@@ -130,13 +149,13 @@ def check_structure() -> bool:
     """
     _info("Checking project structure...")
     required = {
-        "app.py":              50,
+        "app.py": 50,
         "sso_tester_logic.py": 50,
-        "saml_settings.py":    50,
-        "pyproject.toml":      10,
-        "Dockerfile":          10,
-        "README.md":           20,
-        "HOWTO.md":            20,
+        "saml_settings.py": 50,
+        "pyproject.toml": 10,
+        "Dockerfile": 10,
+        "README.md": 20,
+        "HOWTO.md": 20,
     }
     issues = []
     for name, min_bytes in required.items():
@@ -159,6 +178,7 @@ def check_structure() -> bool:
 # Post-deploy checks
 # ---------------------------------------------------------------------------
 
+
 def _ssl_context():
     """
     Build an SSL context for post-deploy checks. Certificates are verified
@@ -169,19 +189,26 @@ def _ssl_context():
     import ssl
 
     ctx = ssl.create_default_context()
-    if os.environ.get("SMOKE_TLS_VERIFY", "true").strip().lower() in {"0", "false", "no"}:
-        _warn("SSL verification disabled for post-deploy checks (SMOKE_TLS_VERIFY=false)")
+    if os.environ.get("SMOKE_TLS_VERIFY", "true").strip().lower() in {
+        "0",
+        "false",
+        "no",
+    }:
+        _warn(
+            "SSL verification disabled for post-deploy checks (SMOKE_TLS_VERIFY=false)"
+        )
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
 
-def _http_get(url: str, follow_redirects: bool = True, timeout: int = 15) -> tuple[int, str]:
+def _http_get(
+    url: str, follow_redirects: bool = True, timeout: int = 15
+) -> tuple[int, str]:
     """
     Minimal HTTP GET using stdlib urllib. Returns (status_code, location_header).
     No third-party dependencies required.
     """
-    import ssl
 
     class _NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -200,7 +227,7 @@ def _http_get(url: str, follow_redirects: bool = True, timeout: int = 15) -> tup
     except urllib.error.HTTPError as e:
         location = e.headers.get("Location", "")
         return e.code, location
-    except Exception as e:
+    except Exception:
         raise
 
 
@@ -253,6 +280,7 @@ def check_oidc_redirect(base_url: str) -> bool:
 # Runner
 # ---------------------------------------------------------------------------
 
+
 def _run_suite(label: str, checks: list[tuple[str, object]]) -> bool:
     print()
     print("=" * 60)
@@ -297,16 +325,16 @@ def main() -> int:
     if args.post_deploy:
         url = args.post_deploy.rstrip("/")
         checks = [
-            ("App reachable",       lambda: check_app_reachable(url)),
+            ("App reachable", lambda: check_app_reachable(url)),
             ("OIDC redirect", lambda: check_oidc_redirect(url)),
         ]
         success = _run_suite("POST-DEPLOY CHECKS", checks)
     else:
         checks = [
-            ("Python syntax",      check_syntax),
-            ("pyproject.toml",     check_requirements),
-            ("Dockerfile",         check_dockerfile),
-            ("Project structure",  check_structure),
+            ("Python syntax", check_syntax),
+            ("pyproject.toml", check_requirements),
+            ("Dockerfile", check_dockerfile),
+            ("Project structure", check_structure),
         ]
         success = _run_suite("PRE-DEPLOY CHECKS", checks)
 

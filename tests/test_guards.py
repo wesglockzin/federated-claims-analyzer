@@ -34,7 +34,9 @@ def test_missing_setting_is_named(name):
 
 
 def test_none_mode_needs_only_the_session_key():
-    assert check_startup_settings({"AUTH_MODE": "none", "FLASK_SECRET_KEY": "k"}) == "none"
+    assert (
+        check_startup_settings({"AUTH_MODE": "none", "FLASK_SECRET_KEY": "k"}) == "none"
+    )
     with pytest.raises(ConfigError, match="FLASK_SECRET_KEY"):
         check_startup_settings({"AUTH_MODE": "none"})
 

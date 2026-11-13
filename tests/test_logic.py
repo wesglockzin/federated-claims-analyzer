@@ -32,7 +32,9 @@ def idp(monkeypatch):
 
 
 def test_refresh_returns_the_idp_error_body(idp):
-    idp["response"] = fake_response(400, '{"error": "invalid_grant", "error_description": "expired"}')
+    idp["response"] = fake_response(
+        400, '{"error": "invalid_grant", "error_description": "expired"}'
+    )
     result = logic.oidc_perform_token_refresh("rt", "okta", "DEV")
     assert result["error"] == "invalid_grant"
     assert result["error_description"] == "expired"
@@ -48,19 +50,26 @@ def test_refresh_reports_status_and_body_of_non_json_error(idp):
 
 def test_refresh_success_returns_tokens(idp):
     idp["response"] = fake_response(200, '{"access_token": "test-token-not-real"}')
-    assert logic.oidc_perform_token_refresh("rt", "okta", "DEV") == {"access_token": "test-token-not-real"}
+    assert logic.oidc_perform_token_refresh("rt", "okta", "DEV") == {
+        "access_token": "test-token-not-real"
+    }
 
 
 def test_refresh_without_endpoint_is_a_configuration_error(monkeypatch):
     monkeypatch.setattr(logic, "OKTA_OIDC_TOKEN_ENDPOINT", None)
-    assert logic.oidc_perform_token_refresh("rt", "okta", "DEV")["error"] == "configuration_error"
+    assert (
+        logic.oidc_perform_token_refresh("rt", "okta", "DEV")["error"]
+        == "configuration_error"
+    )
 
 
 def test_code_exchange_logs_the_error_body(idp, caplog):
     idp["response"] = fake_response(400, '{"error": "invalid_grant"}')
     config = logic.OKTA_ENVIRONMENTS["DEV"]["custom"]
     with caplog.at_level(logging.ERROR, logger=logic.logger.name):
-        assert logic.okta_oidc_exchange_code_for_tokens("code", config, "verifier") is None
+        assert (
+            logic.okta_oidc_exchange_code_for_tokens("code", config, "verifier") is None
+        )
     assert "HTTP 400" in caplog.text
     assert "invalid_grant" in caplog.text
 

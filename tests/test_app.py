@@ -61,7 +61,12 @@ def test_adfs_callback_rejects_missing_state(client):
 
 def test_split_claims_separates_custom_from_standard(app_mod):
     important, detailed = app_mod.process_and_split_claims(
-        {"email": "a@example.invalid", "iss": "https://idp.invalid", "groups": ["g1"], "exp": 1700000000}
+        {
+            "email": "a@example.invalid",
+            "iss": "https://idp.invalid",
+            "groups": ["g1"],
+            "exp": 1700000000,
+        }
     )
     assert important["email"] == "a@example.invalid"
     assert important["groups"] == ["g1"]
@@ -82,10 +87,16 @@ def test_refresh_passes_the_auth_server_type(app_mod, signed_in, monkeypatch):
         calls.append(args)
         return {"access_token": "test-token-not-real"}
 
-    monkeypatch.setattr(app_mod.sso_tester_logic, "oidc_perform_token_refresh", fake_refresh)
+    monkeypatch.setattr(
+        app_mod.sso_tester_logic, "oidc_perform_token_refresh", fake_refresh
+    )
     with signed_in.session_transaction() as sess:
         sess["refresh_token"] = "test-refresh-not-real"
-        sess["idp_context_for_refresh"] = {"idp": "okta", "env": "DEV", "auth_server_type": "default"}
+        sess["idp_context_for_refresh"] = {
+            "idp": "okta",
+            "env": "DEV",
+            "auth_server_type": "default",
+        }
     response = signed_in.post("/refresh_token")
     assert response.status_code == 200
     assert calls == [("test-refresh-not-real", "okta", "DEV", "default")]

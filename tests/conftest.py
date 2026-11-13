@@ -18,7 +18,7 @@ os.environ.update(
     }
 )
 
-import app as app_module  # noqa: E402  (settings above must be set first)
+import app as app_module
 
 
 @pytest.fixture
