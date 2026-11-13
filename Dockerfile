@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libxml2-dev \
     libxmlsec1-dev \
-    libxmlsec1-openssl \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
