@@ -227,7 +227,9 @@ def require_csrf_token():
         return None
     sent = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
     if not states_match(sent, session.get("csrf_token")):
-        logger.warning("Rejected a POST to %s: missing or wrong CSRF token", request.path)
+        logger.warning(
+            "Rejected a POST to %s: missing or wrong CSRF token", request.path
+        )
         return jsonify(success=False, error="Missing or invalid CSRF token."), 400
     return None
 
@@ -384,7 +386,7 @@ def oidc_callback():
         return redirect(url_for("login"))
     try:
         token = oauth.okta.authorize_access_token()
-    except Exception:  # noqa: BLE001 - last-resort boundary; logged, user gets a fixed message
+    except Exception:
         logger.exception("OIDC token exchange failed")
         session["login_error"] = "Sign-in failed. The details are in the server log."
         return redirect(url_for("login"))
@@ -583,7 +585,7 @@ def okta_saml_callback():
             "✅ Okta SAML Flow Completed! Signature Validated.",
             "#28a745",
         )
-    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
+    except Exception as e:
         logger.exception("Okta SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ Okta SAML Error!",
@@ -636,7 +638,7 @@ def adfs_saml_callback():
             "✅ ADFS SAML Flow Completed! Signature Validated.",
             "#28a745",
         )
-    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
+    except Exception as e:
         logger.exception("ADFS SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ ADFS SAML Error!",
@@ -762,7 +764,7 @@ def okta_oidc_callback():
             )
 
         webpage_message, webpage_color = "✅ Okta OIDC Flow Completed!", "#28a745"
-    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
+    except Exception as e:
         logger.exception("Okta OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ Okta OIDC Error!",
@@ -886,7 +888,7 @@ def adfs_oidc_callback():
             )
 
         webpage_message, webpage_color = "✅ ADFS OIDC Flow Completed!", "#28a745"
-    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
+    except Exception as e:
         logger.exception("ADFS OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ ADFS OIDC Error!",
@@ -960,7 +962,7 @@ def refresh_token():
         )
         refresh_result_data["refreshed_id_token"] = refresh_response.get("id_token")
 
-    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
+    except Exception as e:
         logger.exception("Token Refresh Error")
         webpage_message, webpage_color, refresh_error = (
             "❌ Token Refresh Failed!",

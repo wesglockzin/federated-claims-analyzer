@@ -145,7 +145,9 @@ def test_login_page_never_shows_exception_text(app_mod, client, monkeypatch):
     assert "Sign-in failed" in page
 
 
-def test_callback_error_page_never_shows_exception_text(signed_in, monkeypatch, app_mod):
+def test_callback_error_page_never_shows_exception_text(
+    signed_in, monkeypatch, app_mod
+):
     def boom(*args, **kwargs):
         raise RuntimeError("secret-detail-from-library")
 
@@ -173,7 +175,9 @@ def test_refresh_error_page_shows_idp_status_and_body(app_mod, signed_in, monkey
     assert "HTTP 502: bad" in page
 
 
-@pytest.mark.parametrize("path", ["/run_test", "/check_token_lifetimes", "/refresh_token"])
+@pytest.mark.parametrize(
+    "path", ["/run_test", "/check_token_lifetimes", "/refresh_token"]
+)
 def test_post_without_csrf_token_is_rejected(signed_in, path):
     assert signed_in.post(path).status_code == 400
     assert signed_in.post(path, data={"csrf_token": "wrong"}).status_code == 400

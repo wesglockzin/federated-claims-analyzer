@@ -4,7 +4,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from fake_settings import FAKE_ENV
 
 from guards import (
@@ -110,7 +109,12 @@ def test_app_starts_with_the_full_fake_settings():
 
 def test_app_starts_without_login_only_when_asked():
     env = {**FAKE_ENV, "AUTH_MODE": "none"}
-    for name in ("OIDC_ISSUER", "OIDC_CLIENT_ID", "OIDC_CLIENT_SECRET", "ALLOWED_EMAILS"):
+    for name in (
+        "OIDC_ISSUER",
+        "OIDC_CLIENT_ID",
+        "OIDC_CLIENT_SECRET",
+        "ALLOWED_EMAILS",
+    ):
         del env[name]
     assert _import_app(env).returncode == 0
     env["AUTH_MODE"] = "oidc"

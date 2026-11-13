@@ -97,7 +97,8 @@ def load_saml_idps(env: Mapping[str, str]) -> dict[str, dict]:
             },
             "env": env[prefix + "ENV"].upper(),
             "label": env.get(prefix + "LABEL") or f"SAML app {key.split('_', 1)[1]}",
-            "sp_entity_id": env.get(prefix + "SP_ENTITY_ID") or env["SAML_SP_ENTITY_ID"],
+            "sp_entity_id": env.get(prefix + "SP_ENTITY_ID")
+            or env["SAML_SP_ENTITY_ID"],
             "sp_cert_file": env.get(prefix + "SP_CERT_FILE") or "saml_tester.cert",
             "sp_key_file": env.get(prefix + "SP_KEY_FILE") or "saml_tester.key",
         }
@@ -125,7 +126,9 @@ def api_base_url(issuer_url: str) -> str | None:
 
 def build_ui_config(okta: Mapping, adfs: Mapping, saml: Mapping) -> dict:
     """What the form needs: environment names, target apps and default-server envs."""
-    environments = list(dict.fromkeys([*okta, *adfs, *(s["env"] for s in saml.values())]))
+    environments = list(
+        dict.fromkeys([*okta, *adfs, *(s["env"] for s in saml.values())])
+    )
     targets = {
         name: {
             "oidc": [{"label": f"Default OIDC App ({name})", "value": "default"}],

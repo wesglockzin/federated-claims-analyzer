@@ -1016,6 +1016,6 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
     except requests.exceptions.RequestException:
         logger.exception("Okta API request failed")
         return {"success": False, "error": "The Okta API could not be reached."}
-    except Exception:  # noqa: BLE001 - last-resort boundary; logged, client gets a fixed message
+    except Exception:
         logger.exception("Unexpected error in token lifetime check")
         return {"success": False, "error": GENERIC_ERROR}

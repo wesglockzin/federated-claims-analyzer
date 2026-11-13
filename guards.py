@@ -69,7 +69,9 @@ def check_startup_settings(env: Mapping[str, str]) -> str:
     return mode
 
 
-def is_allowed(claims: Mapping, emails: list[str], groups: list[str], claim: str) -> bool:
+def is_allowed(
+    claims: Mapping, emails: list[str], groups: list[str], claim: str
+) -> bool:
     """Allow-list rule: the user's email is listed, or one of their groups is."""
     email = str(claims.get("email") or claims.get("preferred_username") or "").lower()
     if email and email in {item.lower() for item in emails}:
