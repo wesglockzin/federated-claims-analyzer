@@ -1,0 +1,11 @@
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+logs/
+env.config
+env.config.DO_NOT_SHARE
+.env
+saml_tester*.cert
+saml_tester*.key

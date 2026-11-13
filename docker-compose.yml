@@ -1,0 +1,12 @@
+# `docker compose up` reads every setting from the `.env` file next to this one
+# (copy .env.example to .env and fill it in). The settings are listed in
+# .env.example; the compose file passes them all through env_file, so the two
+# cannot drift apart.
+services:
+  app:
+    build: .
+    env_file: .env
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    environment:
+      PORT: "${PORT:-8080}"

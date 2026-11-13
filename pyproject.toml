@@ -1,0 +1,48 @@
+[project]
+name = "federated-claims-analyzer"
+version = "7.3.8"
+description = "Web tool that runs real OIDC and SAML sign-ins against Okta and ADFS and shows the claims."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "flask>=3.0,<4",
+    "werkzeug>=3.0,<4",
+    "python-dotenv>=1.0,<2",
+    "python3-saml>=1.16,<2",
+    "requests>=2.31,<3",
+    "Authlib>=1.9.5,<1.10",  # authlib.jose is deprecated upstream; stay below the release that may remove it
+    "gunicorn>=22,<24",
+    "markdown>=3.5,<4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "ruff>=0.6",
+    "deptry>=0.20",
+    "cryptography>=42",  # the tests make their own RSA signing key
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["app", "sso_tester_logic", "saml_settings", "guards", "idp_config", "http_session", "howto_page"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.deptry]
+pep621_dev_dependency_groups = ["dev"]
+known_first_party = ["app", "sso_tester_logic", "saml_settings", "guards", "idp_config", "http_session", "howto_page"]
+
+[tool.ruff.lint]
+# The default rules plus T20 (no print for diagnostics) and the error-handling
+# rules: no blind or silent exception handlers.
+extend-select = ["T20", "BLE", "S110", "S112"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["gunicorn"]  # run by the Dockerfile CMD, never imported

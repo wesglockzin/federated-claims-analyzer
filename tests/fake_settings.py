@@ -1,0 +1,36 @@
+"""Plainly fake settings shared by the tests. None of them is a real value."""
+
+FAKE_ENV = {
+    "AUTH_MODE": "oidc",
+    "FLASK_SECRET_KEY": "test-key-not-real",
+    "APP_BASE_URL": "http://localhost:8080",
+    "OIDC_ISSUER": "https://idp.invalid",
+    "OIDC_CLIENT_ID": "test-client-not-real",
+    "OIDC_CLIENT_SECRET": "test-secret-not-real",
+    "ALLOWED_EMAILS": "someone@example.invalid",
+    "OKTA_ENVIRONMENTS": "DEV,QA",
+    "OKTA_DEV_ISSUER": "https://idp.invalid/oauth2/test-server",
+    "OKTA_DEV_CLIENT_ID": "test-client-not-real",
+    "OKTA_DEV_OIDC_SECRET": "test-secret-not-real",
+    "OKTA_DEV_DEFAULT_ISSUER": "https://idp.invalid",
+    "OKTA_QA_ISSUER": "https://idp.invalid",
+    "OKTA_QA_CLIENT_ID": "test-client-not-real",
+    "OKTA_QA_OIDC_SECRET": "test-secret-not-real",
+    "ADFS_ENVIRONMENTS": "DEV",
+    "ADFS_DEV_ISSUER": "https://adfs.invalid/adfs",
+    "ADFS_DEV_CLIENT_ID": "test-client-not-real",
+    "ADFS_DEV_CLIENT_SECRET": "test-secret-not-real",
+    "SAML_IDPS": "OKTA_DEV,OKTA_CUCM",
+    "SAML_SP_ENTITY_ID": "sp.invalid",
+    "SAML_OKTA_DEV_ENTITY_ID": "https://idp.invalid/entity",
+    "SAML_OKTA_DEV_SSO_URL": "https://idp.invalid/sso",
+    "SAML_OKTA_DEV_CERT": "test-cert-not-real",
+    "SAML_OKTA_DEV_ENV": "DEV",
+    "SAML_OKTA_CUCM_ENTITY_ID": "https://idp.invalid/cucm",
+    "SAML_OKTA_CUCM_SSO_URL": "https://idp.invalid/cucm-sso",
+    "SAML_OKTA_CUCM_CERT": "test-cert-not-real",
+    "SAML_OKTA_CUCM_ENV": "DEV",
+    "SAML_OKTA_CUCM_LABEL": "Second app",
+}
+
+CSRF = "test-csrf-not-real"
