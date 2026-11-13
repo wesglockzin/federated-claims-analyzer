@@ -468,6 +468,7 @@ dependencies = [
     { name = "python-jose", extra = ["cryptography"] },
     { name = "python3-saml" },
     { name = "requests" },
+    { name = "werkzeug" },
 ]
 
 [package.optional-dependencies]
@@ -490,6 +491,7 @@ requires-dist = [
     { name = "python3-saml", specifier = ">=1.16,<2" },
     { name = "requests", specifier = ">=2.31,<3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
+    { name = "werkzeug", specifier = ">=3.0,<4" },
 ]
 provides-extras = ["dev"]
 

@@ -450,7 +450,7 @@ def run_test():
             auth_url = sso_tester_logic.run_sp_initiated_saml_flow(
                 request, idp_key, force_fresh_login=force_fresh_login
             )
-        except Exception:  # noqa: BLE001 - boundary: any SAML setup failure must show the error page
+        except Exception:
             logger.exception("Error generating SAML request for %s", idp_key)
             auth_url = None
 
