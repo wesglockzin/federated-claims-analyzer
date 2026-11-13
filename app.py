@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -----------------------------------------------------------------------------
 # Script Name : app.py (Web UI for Federated Identity & Claims Analyzer)
 # Description : Provides a Flask-based web interface for running SSO tests
@@ -177,7 +176,7 @@ def add_security_headers(response):
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-        "font-src 'self' https://cdn.jsdelivr.net "
+        "font-src 'self' https://cdn.jsdelivr.net; "
         "img-src 'self' data:; "
         "connect-src 'self';"
     )
@@ -451,8 +450,8 @@ def run_test():
             auth_url = sso_tester_logic.run_sp_initiated_saml_flow(
                 request, idp_key, force_fresh_login=force_fresh_login
             )
-        except Exception as e:
-            logger.error(f"Error generating SAML request for {idp_key}: {e}")
+        except Exception:  # noqa: BLE001 - boundary: any SAML setup failure must show the error page
+            logger.exception("Error generating SAML request for %s", idp_key)
             auth_url = None
 
     if auth_url:
@@ -535,7 +534,7 @@ def okta_saml_callback():
             "#28a745",
         )
     except Exception as e:
-        logger.error(f"Okta SAML Callback Error: {e}", exc_info=True)
+        logger.exception("Okta SAML Callback Error: %s", e)
         webpage_message, webpage_color, saml_error = (
             "❌ Okta SAML Error!",
             "#dc3545",
@@ -588,7 +587,7 @@ def adfs_saml_callback():
             "#28a745",
         )
     except Exception as e:
-        logger.error(f"ADFS SAML Callback Error: {e}", exc_info=True)
+        logger.exception("ADFS SAML Callback Error: %s", e)
         webpage_message, webpage_color, saml_error = (
             "❌ ADFS SAML Error!",
             "#dc3545",
@@ -716,7 +715,7 @@ def okta_oidc_callback():
 
         webpage_message, webpage_color = "✅ Okta OIDC Flow Completed!", "#28a745"
     except Exception as e:
-        logger.error(f"Okta OIDC Callback Error: {e}", exc_info=True)
+        logger.exception("Okta OIDC Callback Error: %s", e)
         webpage_message, webpage_color, oidc_error = (
             "❌ Okta OIDC Error!",
             "#dc3545",
@@ -763,7 +762,6 @@ def adfs_oidc_callback():
     test_timestamp = (
         datetime.now(timezone.utc).astimezone().strftime("%b %d %Y, %I:%M:%S %p %Z")
     )
-    selected_env = session.get("adfs_env_key")
     try:
         if not states_match(
             request.args.get("state"), session.pop("oauth_state", None)
@@ -843,7 +841,7 @@ def adfs_oidc_callback():
 
         webpage_message, webpage_color = "✅ ADFS OIDC Flow Completed!", "#28a745"
     except Exception as e:
-        logger.error(f"ADFS OIDC Callback Error: {e}", exc_info=True)
+        logger.exception("ADFS OIDC Callback Error: %s", e)
         webpage_message, webpage_color, oidc_error = (
             "❌ ADFS OIDC Error!",
             "#dc3545",
@@ -913,7 +911,7 @@ def refresh_token():
         refresh_result_data["refreshed_id_token"] = refresh_response.get("id_token")
 
     except Exception as e:
-        logger.error(f"Token Refresh Error: {e}", exc_info=True)
+        logger.exception("Token Refresh Error: %s", e)
         webpage_message, webpage_color, refresh_error = (
             "❌ Token Refresh Failed!",
             "#dc3545",
@@ -933,7 +931,7 @@ def refresh_token():
                 "protocol_choice": "oidc",
                 "selected_env": ui.get("environment")
                 if ui
-                else list(OKTA_ENVIRONMENTS.keys())[0],
+                else next(iter(OKTA_ENVIRONMENTS)),
                 "selected_target_app": ui.get("target_app") if ui else "default",
                 "auth_server_type": ui.get("auth_server_type", "custom"),
                 "force_fresh_login": ui.get(
@@ -943,6 +941,9 @@ def refresh_token():
             }
         )
         context.update(refresh_result_data)
+        # The template reads these even when no earlier test result is stored.
+        context.setdefault("oidc_imp_claims", {})
+        context.setdefault("oidc_det_claims", {})
     return render_template("index.html", **context)
 
 

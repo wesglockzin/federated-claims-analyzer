@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -----------------------------------------------------------------------------
 # Script Name : sso_tester_logic.py (Core Logic Module for Identity Analyzer)
 # Description : Contains the IdP/Protocol specific test execution functions and
@@ -264,8 +263,8 @@ def load_saml_certs_from_secrets():
         logger.info(
             f"SAML certs loaded from Secret Manager and written to {tmp_cert} and {tmp_key}"
         )
-    except Exception as e:
-        logger.error(f"Failed to write SAML certs to /tmp/: {e}")
+    except OSError as e:
+        logger.error("Failed to write SAML certs to /tmp/: %s", e)
 
 
 # Load SAML certs at module import (happens once at startup)
@@ -548,10 +547,9 @@ def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
 def azure_oidc_exchange_code_for_tokens(code, code_verifier):
     logger.info("--- Azure OIDC: Exchanging Authorization Code for Tokens ---")
     # Ensure endpoints are discovered (needed for multi-worker setups where callback may hit different worker)
-    if not AZURE_OIDC_TOKEN_ENDPOINT:
-        if not azure_oidc_get_endpoints():
-            logger.error("Azure OIDC: Failed to discover endpoints for token exchange")
-            return None
+    if not AZURE_OIDC_TOKEN_ENDPOINT and not azure_oidc_get_endpoints():
+        logger.error("Azure OIDC: Failed to discover endpoints for token exchange")
+        return None
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     payload = {
         "grant_type": "authorization_code",
@@ -607,12 +605,9 @@ def adfs_oidc_validate_id_token(id_token, adfs_issuer_url, adfs_env_key):
 def azure_oidc_validate_id_token(id_token):
     logger.info("--- Azure OIDC: Validating ID Token ---")
     # Ensure endpoints are discovered (needed for multi-worker setups)
-    if not AZURE_OIDC_JWKS_URI:
-        if not azure_oidc_get_endpoints():
-            logger.error(
-                "Azure OIDC: Failed to discover endpoints for token validation"
-            )
-            return None
+    if not AZURE_OIDC_JWKS_URI and not azure_oidc_get_endpoints():
+        logger.error("Azure OIDC: Failed to discover endpoints for token validation")
+        return None
     try:
         jwks = get_jwks_cached(AZURE_OIDC_JWKS_URI)
         if not jwks:
@@ -931,7 +926,7 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
         auth_server_id = "default"
 
     # Determine base URL for API calls
-    if "host.example.gov" in issuer_url or "host.example.gov" in issuer_url or "host.example.gov" in issuer_url or "host.example.gov" in issuer_url or "host.example.gov" in issuer_url:
+    if "host.example.gov" in issuer_url:
         base_url = "https://host.example.gov"
     else:
         error_msg = f"Could not determine base URL from issuer: {issuer_url}"
@@ -1062,5 +1057,5 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
         return {"success": False, "error": error_msg}
     except Exception as e:
         error_msg = f"Unexpected error: {e!s}"
-        logger.error(error_msg)
+        logger.exception(error_msg)
         return {"success": False, "error": error_msg}

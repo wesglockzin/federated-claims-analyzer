@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -----------------------------------------------------------------------------
 # Script Name : saml_settings.py
 # Description :

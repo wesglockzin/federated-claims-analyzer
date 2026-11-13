@@ -227,8 +227,6 @@ def _http_get(
     except urllib.error.HTTPError as e:
         location = e.headers.get("Location", "")
         return e.code, location
-    except Exception:
-        raise
 
 
 def check_app_reachable(base_url: str) -> bool:
@@ -245,7 +243,7 @@ def check_app_reachable(base_url: str) -> bool:
             return True
         _fail(f"Unexpected HTTP {status} — container may not have started cleanly")
         return False
-    except Exception as e:
+    except OSError as e:
         _fail(f"Could not reach app: {e}")
         return False
 
@@ -271,7 +269,7 @@ def check_oidc_redirect(base_url: str) -> bool:
             f"got HTTP {status} → {location or '(no Location header)'}"
         )
         return False
-    except Exception as e:
+    except OSError as e:
         _fail(f"OIDC redirect check failed: {e}")
         return False
 
@@ -292,7 +290,7 @@ def _run_suite(label: str, checks: list[tuple[str, object]]) -> bool:
         print()
         try:
             passed = fn()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - last-resort boundary: a crashing check is reported as a failure
             _fail(f"{name}: unhandled exception — {e}")
             passed = False
         results.append((name, passed))
