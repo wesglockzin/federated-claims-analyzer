@@ -36,5 +36,5 @@ regexes = ['''your-env''']
 [allowlist]
 description = "Plainly fake values used by the tests"
 regexes = [
-  '''test-[a-z]+-not-real''',
+  '''test-[a-z-]+-not-real''',
 ]
