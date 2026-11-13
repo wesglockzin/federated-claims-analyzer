@@ -29,7 +29,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["app", "sso_tester_logic", "saml_settings", "guards", "http_session", "howto_page"]
+py-modules = ["app", "sso_tester_logic", "saml_settings", "guards", "idp_config", "http_session", "howto_page"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -37,7 +37,11 @@ pythonpath = ["."]
 
 [tool.deptry]
 pep621_dev_dependency_groups = ["dev"]
-known_first_party = ["app", "sso_tester_logic", "saml_settings", "guards", "http_session", "howto_page"]
+known_first_party = ["app", "sso_tester_logic", "saml_settings", "guards", "idp_config", "http_session", "howto_page"]
+
+[tool.ruff.lint]
+# The default rules plus T20: no print for diagnostics (use logging).
+extend-select = ["T20"]
 
 [tool.deptry.per_rule_ignores]
 DEP002 = ["gunicorn"]  # run by the Dockerfile CMD, never imported

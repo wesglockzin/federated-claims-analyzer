@@ -1,25 +1,12 @@
-# `docker compose up` reads settings from the shell or from a `.env` file
-# (copy .env.example to .env and fill it in).
+# `docker compose up` reads every setting from the `.env` file next to this one
+# (copy .env.example to .env and fill it in). The settings are listed in
+# .env.example; the compose file passes them all through env_file, so the two
+# cannot drift apart.
 services:
   app:
     build: .
+    env_file: .env
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
     environment:
       PORT: "${PORT:-8080}"
-      AUTH_MODE: "${AUTH_MODE:-oidc}"
-      FLASK_SECRET_KEY: "${FLASK_SECRET_KEY:?FLASK_SECRET_KEY is not set}"
-      APP_BASE_URL: "${APP_BASE_URL:-http://localhost:8080}"
-      OIDC_ISSUER: "${OIDC_ISSUER:-}"
-      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
-      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
-      OKTA_DEV_OIDC_SECRET: "${OKTA_DEV_OIDC_SECRET:?OKTA_DEV_OIDC_SECRET is not set}"
-      OKTA_STG_OIDC_SECRET: "${OKTA_STG_OIDC_SECRET:-}"
-      OKTA_PROD_OIDC_SECRET: "${OKTA_PROD_OIDC_SECRET:-}"
-      OKTA_DEV_API_TOKEN: "${OKTA_DEV_API_TOKEN:-}"
-      OKTA_PROD_API_TOKEN: "${OKTA_PROD_API_TOKEN:-}"
-      ADFS_DEV_CLIENT_SECRET: "${ADFS_DEV_CLIENT_SECRET:?ADFS_DEV_CLIENT_SECRET is not set}"
-      ADFS_PROD_CLIENT_SECRET: "${ADFS_PROD_CLIENT_SECRET:?ADFS_PROD_CLIENT_SECRET is not set}"
-      SAML_TESTER_CERT: "${SAML_TESTER_CERT:-}"
-      SAML_TESTER_KEY: "${SAML_TESTER_KEY:-}"
-      FORCE_FRESH_LOGIN_DEFAULT: "${FORCE_FRESH_LOGIN_DEFAULT:-true}"

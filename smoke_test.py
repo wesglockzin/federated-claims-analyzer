@@ -41,20 +41,25 @@ YELLOW = "\033[93m"
 RESET = "\033[0m"
 
 
+def _say(msg: str = "") -> None:
+    """Write one report line to stdout (this script's output is its report)."""
+    sys.stdout.write(msg + "\n")
+
+
 def _ok(msg: str) -> None:
-    print(f"{GREEN}✓ {msg}{RESET}")
+    _say(f"{GREEN}✓ {msg}{RESET}")
 
 
 def _fail(msg: str) -> None:
-    print(f"{RED}✗ {msg}{RESET}")
+    _say(f"{RED}✗ {msg}{RESET}")
 
 
 def _warn(msg: str) -> None:
-    print(f"{YELLOW}⚠ {msg}{RESET}")
+    _say(f"{YELLOW}⚠ {msg}{RESET}")
 
 
 def _info(msg: str) -> None:
-    print(f"  {msg}")
+    _say(f"  {msg}")
 
 
 # ---------------------------------------------------------------------------
@@ -280,14 +285,14 @@ def check_oidc_redirect(base_url: str) -> bool:
 
 
 def _run_suite(label: str, checks: list[tuple[str, object]]) -> bool:
-    print()
-    print("=" * 60)
-    print(f"  {label}")
-    print("=" * 60)
+    _say()
+    _say("=" * 60)
+    _say(f"  {label}")
+    _say("=" * 60)
 
     results: list[tuple[str, bool]] = []
     for name, fn in checks:
-        print()
+        _say()
         try:
             passed = fn()
         except Exception as e:  # noqa: BLE001 - last-resort boundary: a crashing check is reported as a failure
@@ -295,17 +300,17 @@ def _run_suite(label: str, checks: list[tuple[str, object]]) -> bool:
             passed = False
         results.append((name, passed))
 
-    print()
-    print("=" * 60)
-    print("  SUMMARY")
-    print("=" * 60)
+    _say()
+    _say("=" * 60)
+    _say("  SUMMARY")
+    _say("=" * 60)
     for name, passed in results:
         ((_ok if passed else _fail)(f"{name}: {'PASS' if passed else 'FAIL'}"))
 
     passed_count = sum(1 for _, p in results if p)
     total = len(results)
-    print()
-    print(f"  {passed_count}/{total} checks passed")
+    _say()
+    _say(f"  {passed_count}/{total} checks passed")
     return passed_count == total
 
 
@@ -336,7 +341,7 @@ def main() -> int:
         ]
         success = _run_suite("PRE-DEPLOY CHECKS", checks)
 
-    print()
+    _say()
     if success:
         _ok("Done.")
     else:

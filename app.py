@@ -8,6 +8,7 @@
 # -----------------------------------------------------------------------------
 
 import os
+import secrets
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,7 +30,19 @@ from jose.exceptions import (
 )  # used for ADFS access-token introspection in the SSO tester flow
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from guards import ConfigError, check_startup_settings, is_safe_redirect, states_match
+import idp_config
+from guards import (
+    ConfigError,
+    UserFacingError,
+    bounded,
+    check_startup_settings,
+    cookie_policy,
+    is_allowed,
+    is_safe_redirect,
+    public_error,
+    split_list,
+    states_match,
+)
 
 APP_DIR = Path(__file__).resolve().parent
 # Try to load local env file for development (secrets come from Secret Manager in production)
@@ -52,15 +65,12 @@ def env_flag(name, default=False):
 
 FORCE_FRESH_LOGIN_DEFAULT = env_flag("FORCE_FRESH_LOGIN_DEFAULT", True)
 
-REQUIRED_SECRETS = [
-    "OKTA_DEV_OIDC_SECRET",
-    "ADFS_DEV_CLIENT_SECRET",
-    "ADFS_PROD_CLIENT_SECRET",
-]
-# Fail closed: without a session key and the login settings the app refuses to
-# start, unless AUTH_MODE=none is set explicitly.
+# Fail closed: without a session key, the base URL, the login settings and an
+# allow-list the app refuses to start, unless AUTH_MODE=none is set explicitly.
+# The environment lists (Okta, ADFS, SAML) are checked the same way.
 try:
     AUTH_MODE = check_startup_settings(os.environ)
+    idp_config.validate(os.environ)
 except ConfigError as exc:
     sys.exit(f"FATAL: {exc}")
 
@@ -68,13 +78,12 @@ AUTH_GATE_ENABLED = AUTH_MODE == "oidc"
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").rstrip("/")
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://localhost:8080").rstrip("/")
-OIDC_SCOPES = "openid email profile"
+APP_BASE_URL = os.environ["APP_BASE_URL"].rstrip("/")
+OIDC_SCOPES = os.environ.get("OIDC_SCOPES", "openid email profile")
+OIDC_GROUPS_CLAIM = os.environ.get("OIDC_GROUPS_CLAIM", "groups")
+ALLOWED_EMAILS = split_list(os.environ.get("ALLOWED_EMAILS"))
+ALLOWED_GROUPS = split_list(os.environ.get("ALLOWED_GROUPS"))
 OIDC_GATE_READY = AUTH_GATE_ENABLED
-
-missing_secrets = [secret for secret in REQUIRED_SECRETS if secret not in os.environ]
-if missing_secrets:
-    sys.exit(f"FATAL: required settings are not set: {', '.join(missing_secrets)}")
 
 
 # These imports read settings at import time, so they must follow the dotenv load.
@@ -82,15 +91,13 @@ import sso_tester_logic
 from howto_page import register_howto
 
 logger = sso_tester_logic.logger
-for _optional in ("OKTA_STG_OIDC_SECRET", "OKTA_PROD_OIDC_SECRET"):
-    if _optional not in os.environ:
-        logger.warning(
-            "%s is not set; OIDC tests for that environment will fail.", _optional
-        )
 if not AUTH_GATE_ENABLED:
     logger.warning("AUTH_MODE=none: the app serves every route without a login.")
 ADFS_ENVIRONMENTS = sso_tester_logic.ADFS_ENVIRONMENTS
 OKTA_ENVIRONMENTS = sso_tester_logic.OKTA_ENVIRONMENTS
+UI_CONFIG = idp_config.build_ui_config(
+    OKTA_ENVIRONMENTS, ADFS_ENVIRONMENTS, sso_tester_logic.saml_settings.IDP_CONFIGS
+)
 logger.info(f"App auth gate enabled: {AUTH_GATE_ENABLED}")
 logger.info(f"Force fresh login default: {FORCE_FRESH_LOGIN_DEFAULT}")
 
@@ -102,15 +109,14 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 # Uses Flask's built-in signed cookies - no filesystem, Redis, or database needed
 # Perfect for Cloud Run: stateless, scales to multiple instances, no shared storage required
 app.config["SESSION_PERMANENT"] = False  # Session expires when browser closes
-app.config["SESSION_COOKIE_SAMESITE"] = "None"  # SAML callbacks come back as
-# cross-site POSTs from the IdP — Lax would cause the browser to drop the
-# session cookie on the POST, breaking SAML state retrieval. None+Secure
-# permits cross-site cookies; safe because: (a) the app is HTTPS-only, so the
-# cookie is only ever sent over TLS, (b) all sensitive state-changing endpoints
-# either signature-validate (SAML callbacks) or state-validate (OIDC callbacks)
-# the inbound request, and (c) this is an internal admin tool not exposed to
-# arbitrary cross-origin sites.
-app.config["SESSION_COOKIE_SECURE"] = APP_BASE_URL.startswith("https://")
+# SAML callbacks come back as cross-site POSTs from the IdP, and Lax would make
+# the browser drop the session cookie on them. So over https the cookie is
+# SameSite=None; Secure. Browsers reject SameSite=None without Secure, so over
+# plain http it is Lax: sign-in works, but SAML callbacks need https. Every
+# other POST route carries a CSRF token; the SAML callbacks are signature-checked.
+_SAMESITE, _SECURE = cookie_policy(APP_BASE_URL)
+app.config["SESSION_COOKIE_SAMESITE"] = _SAMESITE
+app.config["SESSION_COOKIE_SECURE"] = _SECURE
 app.config["SESSION_COOKIE_HTTPONLY"] = True  # JavaScript can't access (XSS protection)
 # Flask will use app.secret_key (set above) to sign session cookies
 # ---
@@ -199,6 +205,33 @@ def require_login():
         return redirect(url_for("oidc_login", next=request.path))
 
 
+# --- CSRF protection ---
+# Every POST carries the session's token as a form field or an X-CSRF-Token
+# header. The SAML callbacks are POSTed by the IdP, so they cannot carry it;
+# python3-saml checks their signature instead.
+CSRF_EXEMPT_PATHS = {"/okta/saml/callback", "/adfs/saml/callback"}
+
+
+def csrf_token():
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+app.jinja_env.globals["csrf_token"] = csrf_token
+
+
+@app.before_request
+def require_csrf_token():
+    if request.method != "POST" or request.path in CSRF_EXEMPT_PATHS:
+        return None
+    sent = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
+    if not states_match(sent, session.get("csrf_token")):
+        logger.warning("Rejected a POST to %s: missing or wrong CSRF token", request.path)
+        return jsonify(success=False, error="Missing or invalid CSRF token."), 400
+    return None
+
+
 def start_flask_dev_server():
     if not os.path.exists(sso_tester_logic.CERT_FILE) or not os.path.exists(
         sso_tester_logic.KEY_FILE
@@ -233,13 +266,23 @@ def start_flask_dev_server():
         return False
 
 
+def idp_error_text(provider, error):
+    """Message for an error the IdP sent back. Its text is shown to signed-in users only."""
+    message = f"{provider} returned an error."
+    if AUTH_GATE_ENABLED and not session.get("user"):
+        return message
+    description = request.args.get("error_description", "")
+    return f"{message} {bounded(error)} - {bounded(description)}"
+
+
 def get_full_template_context():
     user = session.get("user")
     user_email = user.get("email") if user else None
     return {
         "app_version": sso_tester_logic.APP_VERSION,
-        "okta_environments": sso_tester_logic.OKTA_ENVIRONMENTS,
-        "adfs_environments": sso_tester_logic.ADFS_ENVIRONMENTS,
+        "environments": UI_CONFIG["environments"],
+        "ui_targets": UI_CONFIG["targets"],
+        "default_server_envs": UI_CONFIG["default_server_envs"],
         "user_email": user_email,
         "force_fresh_login": FORCE_FRESH_LOGIN_DEFAULT,
         "auth_gate_enabled": AUTH_GATE_ENABLED,
@@ -287,7 +330,7 @@ def index():
         {
             "idp_choice": "okta",
             "protocol_choice": "oidc",
-            "selected_env": "DEV",
+            "selected_env": UI_CONFIG["environments"][0],
             "selected_target_app": "default",
             "auth_server_type": "custom",
         }
@@ -332,21 +375,28 @@ def oidc_callback():
     if not AUTH_GATE_ENABLED:
         return redirect(url_for("index"))
     if request.args.get("error"):
-        session["login_error"] = (
-            f"{request.args.get('error')}: {request.args.get('error_description', '')}"
+        logger.warning(
+            "Sign-in returned an error: %s: %s",
+            bounded(request.args.get("error")),
+            bounded(request.args.get("error_description", "")),
         )
+        session["login_error"] = "The identity provider returned an error."
         return redirect(url_for("login"))
     try:
         token = oauth.okta.authorize_access_token()
-    except Exception as e:
+    except Exception:  # noqa: BLE001 - last-resort boundary; logged, user gets a fixed message
         logger.exception("OIDC token exchange failed")
-        session["login_error"] = f"token exchange failed: {e}"
+        session["login_error"] = "Sign-in failed. The details are in the server log."
         return redirect(url_for("login"))
 
     claims = token.get("userinfo") or {}
     email = claims.get("email") or claims.get("preferred_username")
     if not email:
         session["login_error"] = "Email claim missing in id_token."
+        return redirect(url_for("login"))
+    if not is_allowed(claims, ALLOWED_EMAILS, ALLOWED_GROUPS, OIDC_GROUPS_CLAIM):
+        logger.warning("Sign-in refused: the account is not on the allow-list")
+        session["login_error"] = "Your account is not allowed to use this tool."
         return redirect(url_for("login"))
 
     session["user"] = {
@@ -522,7 +572,7 @@ def okta_saml_callback():
 
     try:
         if not idp_key:
-            raise RuntimeError(
+            raise UserFacingError(
                 "SAML context not found in session. Session may have expired or cookie was blocked by the browser."
             )
         saml_data = sso_tester_logic.process_saml_response(request, idp_key)
@@ -533,12 +583,12 @@ def okta_saml_callback():
             "✅ Okta SAML Flow Completed! Signature Validated.",
             "#28a745",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
         logger.exception("Okta SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ Okta SAML Error!",
             "#dc3545",
-            str(e),
+            public_error(e),
         )
     finally:
         session["last_result"] = result_data
@@ -575,7 +625,7 @@ def adfs_saml_callback():
 
     try:
         if not idp_key:
-            raise RuntimeError(
+            raise UserFacingError(
                 "SAML context not found in session. Session may have expired or cookie was blocked by the browser."
             )
         saml_data = sso_tester_logic.process_saml_response(request, idp_key)
@@ -586,12 +636,12 @@ def adfs_saml_callback():
             "✅ ADFS SAML Flow Completed! Signature Validated.",
             "#28a745",
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
         logger.exception("ADFS SAML Callback Error")
         webpage_message, webpage_color, saml_error = (
             "❌ ADFS SAML Error!",
             "#dc3545",
-            str(e),
+            public_error(e),
         )
     finally:
         session["last_result"] = result_data
@@ -649,26 +699,24 @@ def okta_oidc_callback():
         if not states_match(
             request.args.get("state"), session.pop("oauth_state", None)
         ):
-            raise RuntimeError("Invalid state parameter.")
+            raise UserFacingError("Invalid state parameter.")
         if not okta_config:
-            raise RuntimeError("Okta context not found in session.")
+            raise UserFacingError("Okta context not found in session.")
         code, error = request.args.get("code"), request.args.get("error")
         if error:
-            raise RuntimeError(
-                f"Okta error: {error} - {request.args.get('error_description')}"
-            )
+            raise UserFacingError(idp_error_text("Okta", error))
         if not code:
-            raise ValueError("No authorization code received.")
+            raise UserFacingError("No authorization code received.")
 
         # Re-discover endpoints in this worker (multi-worker safety)
         if not sso_tester_logic.okta_oidc_get_endpoints(okta_config["oidc_issuer_url"]):
-            raise RuntimeError("Failed to discover Okta OIDC endpoints")
+            raise UserFacingError("Failed to discover Okta OIDC endpoints")
 
         tokens = sso_tester_logic.okta_oidc_exchange_code_for_tokens(
             code, okta_config, session.get("code_verifier")
         )
         if not tokens:
-            raise ConnectionError("Token exchange failed.")
+            raise UserFacingError("Token exchange failed.")
 
         result_data.update(
             {
@@ -714,12 +762,12 @@ def okta_oidc_callback():
             )
 
         webpage_message, webpage_color = "✅ Okta OIDC Flow Completed!", "#28a745"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
         logger.exception("Okta OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ Okta OIDC Error!",
             "#dc3545",
-            str(e),
+            public_error(e),
         )
     finally:
         session["last_result"] = result_data
@@ -766,28 +814,26 @@ def adfs_oidc_callback():
         if not states_match(
             request.args.get("state"), session.pop("oauth_state", None)
         ):
-            raise RuntimeError("Invalid state parameter.")
+            raise UserFacingError("Invalid state parameter.")
         code, error = request.args.get("code"), request.args.get("error")
         if error:
-            raise RuntimeError(
-                f"ADFS error: {error} - {request.args.get('error_description')}"
-            )
+            raise UserFacingError(idp_error_text("ADFS", error))
         if not code:
-            raise ValueError("No authorization code received.")
+            raise UserFacingError("No authorization code received.")
         adfs_env_key = session.get("adfs_env_key")
         adfs_issuer = session.get("adfs_issuer")
         if not adfs_env_key or not adfs_issuer:
-            raise RuntimeError("ADFS context not found in session.")
+            raise UserFacingError("ADFS context not found in session.")
 
         # Re-discover endpoints in this worker (multi-worker safety)
         if not sso_tester_logic.adfs_oidc_get_endpoints(adfs_issuer):
-            raise RuntimeError("Failed to discover ADFS OIDC endpoints")
+            raise UserFacingError("Failed to discover ADFS OIDC endpoints")
 
         tokens = sso_tester_logic.adfs_oidc_exchange_code_for_tokens(
             code, adfs_env_key, session.get("code_verifier")
         )
         if not tokens:
-            raise ConnectionError("Token exchange failed.")
+            raise UserFacingError("Token exchange failed.")
 
         result_data.update(
             {
@@ -840,12 +886,12 @@ def adfs_oidc_callback():
             )
 
         webpage_message, webpage_color = "✅ ADFS OIDC Flow Completed!", "#28a745"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
         logger.exception("ADFS OIDC Callback Error")
         webpage_message, webpage_color, oidc_error = (
             "❌ ADFS OIDC Error!",
             "#dc3545",
-            str(e),
+            public_error(e),
         )
     finally:
         session["last_result"] = result_data
@@ -890,7 +936,7 @@ def refresh_token():
 
     try:
         if not refresh_token_val or not idp_context:
-            raise RuntimeError("Refresh token or IdP context not found in session.")
+            raise UserFacingError("Refresh token or IdP context not found in session.")
 
         refresh_response = sso_tester_logic.oidc_perform_token_refresh(
             refresh_token_val,
@@ -900,8 +946,12 @@ def refresh_token():
         )
 
         if refresh_response.get("error"):
-            raise RuntimeError(
-                f"IdP Error: {refresh_response.get('error_description') or refresh_response.get('error')}"
+            raise UserFacingError(
+                "IdP Error: "
+                + bounded(
+                    refresh_response.get("error_description")
+                    or refresh_response.get("error")
+                )
             )
 
         webpage_message, webpage_color = "✅ Token Refresh Successful!", "#28a745"
@@ -910,12 +960,12 @@ def refresh_token():
         )
         refresh_result_data["refreshed_id_token"] = refresh_response.get("id_token")
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - last-resort boundary; logged, page gets a fixed message
         logger.exception("Token Refresh Error")
         webpage_message, webpage_color, refresh_error = (
             "❌ Token Refresh Failed!",
             "#dc3545",
-            str(e),
+            public_error(e),
         )
 
     finally:
@@ -931,7 +981,7 @@ def refresh_token():
                 "protocol_choice": "oidc",
                 "selected_env": ui.get("environment")
                 if ui
-                else next(iter(OKTA_ENVIRONMENTS)),
+                else UI_CONFIG["environments"][0],
                 "selected_target_app": ui.get("target_app") if ui else "default",
                 "auth_server_type": ui.get("auth_server_type", "custom"),
                 "force_fresh_login": ui.get(

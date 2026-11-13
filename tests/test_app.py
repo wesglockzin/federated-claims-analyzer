@@ -1,3 +1,7 @@
+import pytest
+from fake_settings import CSRF
+
+
 def test_health_is_public_and_ok(client):
     response = client.get("/health")
     assert response.status_code == 200
@@ -97,6 +101,109 @@ def test_refresh_passes_the_auth_server_type(app_mod, signed_in, monkeypatch):
             "env": "DEV",
             "auth_server_type": "default",
         }
-    response = signed_in.post("/refresh_token")
+    response = signed_in.post("/refresh_token", data={"csrf_token": CSRF})
     assert response.status_code == 200
     assert calls == [("test-refresh-not-real", "okta", "DEV", "default")]
+
+
+def _fake_oauth(app_mod, monkeypatch, userinfo):
+    class FakeOAuthClient:
+        def authorize_access_token(self):
+            if isinstance(userinfo, Exception):
+                raise userinfo
+            return {"userinfo": userinfo}
+
+    monkeypatch.setattr(app_mod.oauth, "okta", FakeOAuthClient(), raising=False)
+
+
+def test_callback_refuses_an_account_not_on_the_allow_list(
+    app_mod, client, monkeypatch
+):
+    _fake_oauth(app_mod, monkeypatch, {"email": "stranger@example.invalid"})
+    response = client.get("/oidc/callback")
+    assert response.status_code == 302
+    with client.session_transaction() as sess:
+        assert "user" not in sess
+        assert "not allowed" in sess["login_error"]
+
+
+def test_callback_admits_an_account_in_an_allowed_group(app_mod, client, monkeypatch):
+    monkeypatch.setattr(app_mod, "ALLOWED_GROUPS", ["staff"])
+    _fake_oauth(
+        app_mod, monkeypatch, {"email": "new@example.invalid", "groups": ["staff"]}
+    )
+    client.get("/oidc/callback")
+    with client.session_transaction() as sess:
+        assert sess["user"]["email"] == "new@example.invalid"
+
+
+def test_login_page_never_shows_exception_text(app_mod, client, monkeypatch):
+    _fake_oauth(app_mod, monkeypatch, RuntimeError("secret-detail-from-library"))
+    client.get("/oidc/callback")
+    page = client.get("/login").get_data(as_text=True)
+    assert "secret-detail-from-library" not in page
+    assert "Sign-in failed" in page
+
+
+def test_callback_error_page_never_shows_exception_text(signed_in, monkeypatch, app_mod):
+    def boom(*args, **kwargs):
+        raise RuntimeError("secret-detail-from-library")
+
+    monkeypatch.setattr(app_mod.sso_tester_logic, "okta_oidc_get_endpoints", boom)
+    with signed_in.session_transaction() as sess:
+        sess["oauth_state"] = "abc"
+        sess["okta_env_key"] = "DEV"
+    page = signed_in.get("/okta/oidc/callback?code=c&state=abc").get_data(as_text=True)
+    assert "secret-detail-from-library" not in page
+    assert "request failed" in page
+
+
+def test_refresh_error_page_shows_idp_status_and_body(app_mod, signed_in, monkeypatch):
+    monkeypatch.setattr(
+        app_mod.sso_tester_logic,
+        "oidc_perform_token_refresh",
+        lambda *args: {"error": "http_error", "error_description": "HTTP 502: bad"},
+    )
+    with signed_in.session_transaction() as sess:
+        sess["refresh_token"] = "test-refresh-not-real"
+        sess["idp_context_for_refresh"] = {"idp": "okta", "env": "DEV"}
+    page = signed_in.post("/refresh_token", data={"csrf_token": CSRF}).get_data(
+        as_text=True
+    )
+    assert "HTTP 502: bad" in page
+
+
+@pytest.mark.parametrize("path", ["/run_test", "/check_token_lifetimes", "/refresh_token"])
+def test_post_without_csrf_token_is_rejected(signed_in, path):
+    assert signed_in.post(path).status_code == 400
+    assert signed_in.post(path, data={"csrf_token": "wrong"}).status_code == 400
+
+
+def test_post_with_csrf_header_is_accepted(signed_in):
+    response = signed_in.post(
+        "/check_token_lifetimes",
+        data={"idp_choice": "adfs", "environment": "DEV"},
+        headers={"X-CSRF-Token": CSRF},
+    )
+    assert response.status_code == 200
+    assert "only supported for Okta" in response.get_json()["error"]
+
+
+def test_saml_callback_is_not_blocked_by_csrf(client):
+    response = client.post("/okta/saml/callback")
+    assert response.status_code == 200
+    assert b"SAML context not found" in response.data
+
+
+def test_form_carries_a_csrf_token_and_the_configured_environments(signed_in):
+    page = signed_in.get("/").get_data(as_text=True)
+    assert f'name="csrf_token" value="{CSRF}"' in page
+    assert 'name="environment" value="DEV"' in page
+    assert 'name="environment" value="QA"' in page
+    assert 'name="environment" value="PROD"' not in page
+    assert "Second app" in page
+
+
+def test_session_cookie_is_lax_over_http(app_mod):
+    assert app_mod.app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
+    assert app_mod.app.config["SESSION_COOKIE_SECURE"] is False

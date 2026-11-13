@@ -22,7 +22,9 @@ from jose import jwt
 from jose.exceptions import JWTError
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 
+import idp_config
 import saml_settings
+from guards import GENERIC_ERROR, UserFacingError, bounded
 from http_session import make_session
 
 APP_VERSION = "7.3.8"
@@ -33,47 +35,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # --- Configuration: Base URL (Local vs Cloud) ---
 # This allows the app to switch between localhost and Cloud Run automatically
 # via the APP_BASE_URL environment variable.
-BASE_URL = os.environ.get("APP_BASE_URL", "https://localhost:8080").rstrip("/")
+BASE_URL = os.environ["APP_BASE_URL"].rstrip("/")
 
-# --- ADFS Environment Presets ---
-ADFS_ENVIRONMENTS = {
-    "DEV": "https://host.example.gov/[redacted-path]",
-    "PROD": "https://host.example.gov/[redacted-path]",
-}
-
-# --- Okta Environment Configuration (Nested for Auth Server Toggle) ---
-OKTA_ENVIRONMENTS = {
-    "DEV": {
-        "custom": {
-            "oidc_issuer_url": "https://host.example.gov/[redacted-path]",
-            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
-            "oidc_client_secret": os.environ.get("OKTA_DEV_OIDC_SECRET", ""),
-            "oidc_audience": "https://host.example.gov/[redacted-path]",
-        },
-        "default": {
-            "oidc_issuer_url": "https://host.example.gov/[redacted-path]",
-            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
-            "oidc_client_secret": os.environ.get("OKTA_DEV_OIDC_SECRET", ""),
-            "oidc_audience": "api://default",
-        },
-    },
-    "STG": {
-        "custom": {
-            "oidc_issuer_url": "https://host.example.gov",
-            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
-            "oidc_client_secret": os.environ.get("OKTA_STG_OIDC_SECRET", ""),
-            "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
-        },
-    },
-    "PROD": {
-        "custom": {
-            "oidc_issuer_url": "https://host.example.gov",
-            "oidc_client_id": "0oaEXAMPLE00EXAMPLE0",
-            "oidc_client_secret": os.environ.get("OKTA_PROD_OIDC_SECRET", ""),
-            "oidc_audience": "0oaEXAMPLE00EXAMPLE0",
-        },
-    },
-}
+# --- Okta and ADFS environments: lists of any length, from environment settings ---
+# (see idp_config.py). Okta entries are nested for the auth server toggle.
+OKTA_ENVIRONMENTS = idp_config.load_okta_environments(os.environ)
+ADFS_ENVIRONMENTS, ADFS_OIDC_CONFIGS = idp_config.load_adfs_environments(os.environ)
 
 # Dynamic Redirect URI based on BASE_URL
 OKTA_OIDC_REDIRECT_URI = f"{BASE_URL}/okta/oidc/callback"
@@ -85,17 +52,7 @@ OKTA_OIDC_SCOPES = "openid profile email offline_access"
     OKTA_OIDC_USERINFO_ENDPOINT,
 ) = None, None, None, None
 
-# --- ADFS OIDC Configuration ---
-ADFS_OIDC_CONFIGS = {
-    "DEV": {
-        "client_id": "00000000-0000-0000-0000-000000000000",
-        "client_secret": os.environ.get("ADFS_DEV_CLIENT_SECRET", ""),
-    },
-    "PROD": {
-        "client_id": "00000000-0000-0000-0000-000000000000",
-        "client_secret": os.environ.get("ADFS_PROD_CLIENT_SECRET", ""),
-    },
-}
+# --- ADFS OIDC Configuration (ADFS_OIDC_CONFIGS is loaded above) ---
 ADFS_OIDC_SCOPES = "openid profile email offline_access"
 # Dynamic Redirect URI based on BASE_URL
 ADFS_OIDC_REDIRECT_URI = f"{BASE_URL}/adfs/oidc/callback"
@@ -717,7 +674,10 @@ def oidc_perform_token_refresh(
             f"{idp_choice.upper()} OIDC: Error during token refresh: {describe_request_error(e)}"
         )
         if e.response is None:
-            return {"error": "request_error", "error_description": str(e)}
+            return {
+                "error": "request_error",
+                "error_description": "The identity provider could not be reached.",
+            }
         try:
             body = e.response.json()
         except ValueError:
@@ -782,9 +742,9 @@ def process_saml_response(request, idp_key):
     if errors:
         error_reason = auth.get_last_error_reason()
         logger.error(f"SAML Response validation failed: {error_reason}")
-        raise RuntimeError(f"SAML Error: {error_reason}")
+        raise UserFacingError("SAML response validation failed.")
     if not auth.is_authenticated():
-        raise RuntimeError("SAML authentication failed.")
+        raise UserFacingError("SAML authentication failed.")
     logger.info("SAML: Response validation successful!")
 
     claims = auth.get_attributes()
@@ -925,10 +885,9 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
         # For PROD custom server, the issuer is just the base domain
         auth_server_id = "default"
 
-    # Determine base URL for API calls
-    if "host.example.gov" in issuer_url:
-        base_url = "https://host.example.gov"
-    else:
+    # Determine base URL for API calls: the scheme and host of the issuer
+    base_url = idp_config.api_base_url(issuer_url)
+    if not base_url:
         error_msg = f"Could not determine base URL from issuer: {issuer_url}"
         logger.error(error_msg)
         return {"success": False, "error": error_msg}
@@ -1034,7 +993,7 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
         # Check for 401 Unauthorized - likely missing Custom AS SKU
         if e.response.status_code == 401:
             logger.warning(
-                f"{environment} token lifetime check failed (401 Unauthorized - likely no Custom AS SKU): {e!s}"
+                f"{environment} token lifetime check failed (401 Unauthorized - likely no Custom AS SKU): {describe_request_error(e)}"
             )
             return {
                 "success": False,
@@ -1048,14 +1007,15 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
                 },
             }
         else:
-            error_msg = f"HTTP error: {e!s}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
-    except requests.exceptions.RequestException as e:
-        error_msg = f"HTTP request failed: {e!s}"
-        logger.error(error_msg)
-        return {"success": False, "error": error_msg}
-    except Exception as e:
-        error_msg = f"Unexpected error: {e!s}"
-        logger.exception(error_msg)
-        return {"success": False, "error": error_msg}
+            # The caller is signed in; show the IdP's status and a bounded body.
+            logger.error(f"Okta API error: {describe_request_error(e)}")
+            return {
+                "success": False,
+                "error": f"Okta API returned HTTP {e.response.status_code}: {bounded(e.response.text)}",
+            }
+    except requests.exceptions.RequestException:
+        logger.exception("Okta API request failed")
+        return {"success": False, "error": "The Okta API could not be reached."}
+    except Exception:  # noqa: BLE001 - last-resort boundary; logged, client gets a fixed message
+        logger.exception("Unexpected error in token lifetime check")
+        return {"success": False, "error": GENERIC_ERROR}

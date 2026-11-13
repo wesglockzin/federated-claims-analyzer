@@ -135,21 +135,16 @@
         <div class="grid">
             <article>
                 <form action="/run_test" method="post" id="tester-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <fieldset>
                         <legend>Target Environment</legend>
                         <div class="env-switch">
+                            {% for env_name in environments %}
                             <label>
-                                <input type="radio" name="environment" value="DEV" {% if not selected_env or selected_env == 'DEV' %}checked{% endif %}>
-                                <span>Development (DEV)</span>
+                                <input type="radio" name="environment" value="{{ env_name }}" {% if selected_env == env_name or (not selected_env and loop.first) %}checked{% endif %}>
+                                <span>{{ env_name }}</span>
                             </label>
-                            <label>
-                                <input type="radio" name="environment" value="STG" {% if selected_env == 'STG' %}checked{% endif %}>
-                                <span>Staging (STG)</span>
-                            </label>
-                            <label>
-                                <input type="radio" name="environment" value="PROD" {% if selected_env == 'PROD' %}checked{% endif %}>
-                                <span>Production (PROD)</span>
-                            </label>
+                            {% endfor %}
                         </div>
                     </fieldset>
 
@@ -168,7 +163,7 @@
                     </div>
 
                     <fieldset id="auth-server-fieldset" class="hidden">
-                        <legend>Authorization Server (DEV Only)</legend>
+                        <legend>Authorization Server (where a default server is configured)</legend>
                         <label><input type="radio" name="auth_server_type" value="custom" {% if not auth_server_type or auth_server_type == 'custom' %}checked{% endif %}> Custom Auth Server</label>
                         <label><input type="radio" name="auth_server_type" value="default" {% if auth_server_type == 'default' %}checked{% endif %}> Org Auth Server (default)</label>
                     </fieldset>
@@ -277,6 +272,7 @@
                                 </div>
                                 <p style="padding: 0 var(--pico-card-padding);">A refresh token was received, enabling the application to request new access tokens without user interaction.</p>
                                 <form action="/refresh_token" method="post" style="margin: 1rem var(--pico-card-padding) 0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit">Test Token Refresh</button>
                                 </form>
                             {% else %}
@@ -417,27 +413,9 @@
         };
 
         const formLogic = {
-            configMap: {
-                DEV: {
-                    oidc: [ { label: "Default OIDC App (DEV)", value: "default" } ],
-                    saml: [
-                        { label: "SAML Test App #1 (DEV)", value: "dev" },
-                        { label: "CUCM (DEV)", value: "cucm" }
-                    ]
-                },
-                STG: {
-                    oidc: [ { label: "Default OIDC App (STG)", value: "default" } ],
-                    saml: [
-                        { label: "SAML Test App #1 (STG)", value: "stg" }
-                    ]
-                },
-                PROD: {
-                    oidc: [ { label: "Default OIDC App (PROD)", value: "default" } ],
-                    saml: [
-                        { label: "SAML Test App #1 (PROD)", value: "prod" }
-                    ]
-                }
-            },
+            // Built by the server from the environment settings.
+            configMap: {{ ui_targets | tojson }},
+            defaultServerEnvs: {{ default_server_envs | tojson }},
             init() { 
                 this.form = document.getElementById('tester-form');
                 this.targetSelect = document.getElementById('target_app');
@@ -459,8 +437,8 @@
                 const idp = document.querySelector('input[name="idp_choice"]:checked').value;
                 const protocol = document.querySelector('input[name="protocol_choice"]:checked').value;
 
-                // Show only for DEV + Okta + OIDC
-                if (env === 'DEV' && idp === 'okta' && protocol === 'oidc') {
+                // Show only for Okta + OIDC in an environment that has a default server
+                if (this.defaultServerEnvs.includes(env) && idp === 'okta' && protocol === 'oidc') {
                     this.authServerFieldset.classList.remove('hidden');
                 } else {
                     this.authServerFieldset.classList.add('hidden');
@@ -493,6 +471,12 @@
             }
         };
 
+        function escapeHtml(text) {
+            const el = document.createElement('div');
+            el.textContent = String(text);
+            return el.innerHTML;
+        }
+
         function checkTokenLifetimes() {
             const resultsDiv = document.querySelector('div:has(> hgroup > h2:first-child)');
             if (!resultsDiv) return;
@@ -517,6 +501,7 @@
             formData.append('environment', environment);
             formData.append('idp_choice', idp_choice);
             formData.append('auth_server_type', auth_server_type);
+            formData.append('csrf_token', {{ csrf_token() | tojson }});
 
             // Make AJAX request
             fetch('/check_token_lifetimes', {
@@ -571,7 +556,7 @@
                             </hgroup>
                             <article style="background-color: #e3f2fd; border-color: #90caf9;">
                                 <h3>ℹ️ Token Lifetime Check - PROD Limitation</h3>
-                                <p>${data.error}</p>
+                                <p>${escapeHtml(data.error)}</p>
                                 <hr>
                                 <p><strong>Assumed Okta Org Server Defaults:</strong></p>
                                 <ul>
@@ -589,7 +574,7 @@
                             </hgroup>
                             <article style="background-color: #ffebee; border-color: #ef9a9a;">
                                 <h3>❌ Token Lifetime Check Failed</h3>
-                                <p><strong>Error:</strong> ${data.error}</p>
+                                <p><strong>Error:</strong> ${escapeHtml(data.error)}</p>
                             </article>
                         `;
                     }
