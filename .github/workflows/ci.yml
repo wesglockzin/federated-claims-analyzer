@@ -32,9 +32,12 @@ jobs:
       - name: Lockfile is current
         run: uv lock --check
       - name: Dependency audit
-        # python-jose has no fixed release; every jwt.decode call pins algorithms=["RS256"].
-        # Remove the ignores when a fixed release exists.
-        run: pip-audit . --ignore-vuln GHSA-3qf3-8w2g-rqmx --ignore-vuln PYSEC-2026-4298
+        # python-jose (PYSEC-2026-4298) and its dependency ecdsa (PYSEC-2026-1325) have no
+        # fixed release. The calls that verify signatures pin algorithms=["RS256"], so the
+        # ecdsa-based algorithms are never used; the one call in app.py is unverified
+        # decoding of an already obtained token, for display only.
+        # Remove the ignores when fixed releases exist or python-jose is replaced.
+        run: pip-audit . --ignore-vuln PYSEC-2026-4298 --ignore-vuln PYSEC-2026-1325
 
   gitleaks:
     runs-on: ubuntu-latest
