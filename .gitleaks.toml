@@ -3,6 +3,36 @@ title = "federated-claims-analyzer"
 [extend]
 useDefault = true
 
+# Project rules: nothing that names a private network or a real deployment
+# belongs in this repository (Handbook SEC-2). Use https://example.invalid
+# style placeholders, which these rules cannot match.
+
+[[rules]]
+id = "private-ipv4-address"
+description = "Private IPv4 address"
+regex = '''\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b'''
+
+[[rules]]
+id = "internal-hostname"
+description = "Host name under an internal-only top-level name"
+regex = '''[a-z0-9-]+\.(?:internal|corp|intranet)\b'''
+
+[[rules]]
+id = "container-registry-host"
+description = "Cloud container registry host name"
+regex = '''[a-z0-9-]+\.azurecr\.io'''
+# The first public commit still holds this placeholder; history cannot be changed.
+[rules.allowlist]
+regexes = ['''your-acr-name''']
+
+[[rules]]
+id = "container-platform-host"
+description = "Container platform application host name"
+regex = '''[a-z0-9.-]+\.azurecontainerapps\.io'''
+# The first public commit still holds this placeholder; history cannot be changed.
+[rules.allowlist]
+regexes = ['''your-env''']
+
 [allowlist]
 description = "Plainly fake values used by the tests"
 regexes = [

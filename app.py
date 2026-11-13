@@ -13,6 +13,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import jwt
 from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from flask import (
@@ -25,9 +26,6 @@ from flask import (
     session,
     url_for,
 )
-from jose.exceptions import (
-    JWTError,
-)  # used for ADFS access-token introspection in the SSO tester flow
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 import idp_config
@@ -121,7 +119,7 @@ app.config["SESSION_COOKIE_HTTPONLY"] = True  # JavaScript can't access (XSS pro
 # Flask will use app.secret_key (set above) to sign session cookies
 # ---
 
-# --- Auth-gate OIDC (PROD Okta via "Admin SSO App" app) ---
+# --- Auth-gate OIDC (the tool's own OIDC client: OIDC_CLIENT_ID) ---
 # Authlib drives the auth-code+PKCE flow AND validates the id_token.
 oauth = OAuth(app)
 if OIDC_GATE_READY:
@@ -242,18 +240,12 @@ def start_flask_dev_server():
             f"SSL files not found! Ensure '{sso_tester_logic.CERT_FILE.name}' and '{sso_tester_logic.KEY_FILE.name}' are present."
         )
         return False
-    cucm_cert_path = sso_tester_logic.SCRIPT_DIR / "saml_tester_cucm.cert"
-    cucm_key_path = sso_tester_logic.SCRIPT_DIR / "saml_tester_cucm.key"
-    if not os.path.exists(cucm_cert_path) or not os.path.exists(cucm_key_path):
-        logger.warning(
-            f"CUCM SAML certs not found! Expected files: {cucm_cert_path.name} and {cucm_key_path.name}. CUCM SAML tests will fail."
-        )
-
     try:
         logger.info(
             f"Flask App: Starting local HTTPS server on https://localhost:{sso_tester_logic.LISTEN_PORT}..."
         )
         app.run(
+            host="127.0.0.1",  # local dev only; the container binds 0.0.0.0 (Dockerfile)
             port=sso_tester_logic.LISTEN_PORT,
             debug=False,
             use_reloader=False,
@@ -310,7 +302,7 @@ def process_and_split_claims(claims_dict):
             try:
                 value = f"{datetime.fromtimestamp(int(value)).strftime('%Y-%m-%d %H:%M:%S')} ({value})"
             except (ValueError, TypeError):
-                pass
+                logger.debug("Claim %s is not a timestamp: %r", claim, value)
         is_custom = claim not in sso_tester_logic.STANDARD_CLAIMS
         is_essential = claim in essential_standard_claims
         if is_custom or is_essential:
@@ -755,7 +747,7 @@ def okta_oidc_callback():
             )
             imp, det = process_and_split_claims(
                 sso_tester_logic.okta_oidc_get_userinfo_claims(
-                    result_data["raw_access_token"]
+                    result_data["raw_access_token"], okta_config
                 )
             )
             result_data["userinfo_imp_claims"], result_data["userinfo_det_claims"] = (
@@ -860,26 +852,21 @@ def adfs_oidc_callback():
         if result_data["raw_access_token"]:
             try:
                 imp, det = process_and_split_claims(
-                    sso_tester_logic.jwt.decode(
-                        token=result_data["raw_access_token"],
-                        key="",
-                        options={
-                            "verify_signature": False,
-                            "verify_aud": False,
-                            "verify_exp": False,
-                        },
+                    jwt.decode(
+                        result_data["raw_access_token"],
+                        options={"verify_signature": False},
                     )
                 )
                 result_data["access_imp_claims"], result_data["access_det_claims"] = (
                     imp,
                     det,
                 )
-            except JWTError:
+            except jwt.PyJWTError:
                 logger.info("ADFS Access Token is not a JWT.")
                 result_data["access_imp_claims"] = {"token_type": "Opaque or non-JWT"}
             imp, det = process_and_split_claims(
                 sso_tester_logic.adfs_oidc_get_userinfo_claims(
-                    result_data["raw_access_token"]
+                    result_data["raw_access_token"], adfs_issuer
                 )
             )
             result_data["userinfo_imp_claims"], result_data["userinfo_det_claims"] = (

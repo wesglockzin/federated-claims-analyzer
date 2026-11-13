@@ -10,6 +10,13 @@ os.environ.update(FAKE_ENV)
 import app as app_module
 
 
+@pytest.fixture(autouse=True)
+def empty_endpoint_and_key_caches(monkeypatch):
+    """Each test starts with no discovered endpoints and no cached JWKS."""
+    monkeypatch.setattr(app_module.sso_tester_logic, "_endpoints_cache", {})
+    monkeypatch.setattr(app_module.sso_tester_logic, "_jwks_cache", {})
+
+
 @pytest.fixture
 def app_mod():
     return app_module

@@ -9,7 +9,7 @@ Pre-deploy  (default):
 
 Post-deploy (--post-deploy <url>):
     HTTP checks against the live Container App. Verifies the container is up
-    and Azure AD OIDC redirect is functional.
+    and the sign-in redirect is functional.
     Also zero external dependencies (uses urllib, stdlib only).
 
 Exit code 0 = all checks passed.

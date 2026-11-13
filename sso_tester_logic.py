@@ -17,9 +17,8 @@ import xml.dom.minidom
 from pathlib import Path
 from urllib.parse import urlencode
 
+import jwt
 import requests
-from jose import jwt
-from jose.exceptions import JWTError
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 
 import idp_config
@@ -45,51 +44,31 @@ ADFS_ENVIRONMENTS, ADFS_OIDC_CONFIGS = idp_config.load_adfs_environments(os.envi
 # Dynamic Redirect URI based on BASE_URL
 OKTA_OIDC_REDIRECT_URI = f"{BASE_URL}/okta/oidc/callback"
 OKTA_OIDC_SCOPES = "openid profile email offline_access"
-(
-    OKTA_OIDC_AUTH_ENDPOINT,
-    OKTA_OIDC_TOKEN_ENDPOINT,
-    OKTA_OIDC_JWKS_URI,
-    OKTA_OIDC_USERINFO_ENDPOINT,
-) = None, None, None, None
 
 # --- ADFS OIDC Configuration (ADFS_OIDC_CONFIGS is loaded above) ---
 ADFS_OIDC_SCOPES = "openid profile email offline_access"
 # Dynamic Redirect URI based on BASE_URL
 ADFS_OIDC_REDIRECT_URI = f"{BASE_URL}/adfs/oidc/callback"
-(
-    ADFS_OIDC_AUTH_ENDPOINT,
-    ADFS_OIDC_TOKEN_ENDPOINT,
-    ADFS_OIDC_JWKS_URI,
-    ADFS_OIDC_USERINFO_ENDPOINT,
-) = None, None, None, None
 
-# --- Azure AD OIDC Configuration (App Login) ---
-AZURE_OIDC_TENANT_ID = os.environ.get("AZURE_OIDC_TENANT_ID", "")
-AZURE_OIDC_CLIENT_ID = os.environ.get("AZURE_OIDC_CLIENT_ID", "")
-AZURE_OIDC_CLIENT_SECRET = os.environ.get("AZURE_OIDC_CLIENT_SECRET", "")
-AZURE_OIDC_ISSUER = (
-    f"https://login.microsoftonline.com/{AZURE_OIDC_TENANT_ID}/v2.0"
-    if AZURE_OIDC_TENANT_ID
-    else ""
-)
-AZURE_OIDC_SCOPES = "openid email profile"
-AZURE_OIDC_REDIRECT_URI = f"{BASE_URL}/azure/oidc/callback"
-(
-    AZURE_OIDC_AUTH_ENDPOINT,
-    AZURE_OIDC_TOKEN_ENDPOINT,
-    AZURE_OIDC_JWKS_URI,
-    AZURE_OIDC_USERINFO_ENDPOINT,
-) = None, None, None, None
+# Discovered endpoints, keyed by issuer URL: {issuer: {"auth", "token", "jwks_uri",
+# "userinfo"}}. Each entry is written whole, never changed afterwards, and found by
+# the issuer of the environment being tested, so concurrent users and workers
+# cannot overwrite each other's endpoints. A worker that has no entry discovers it.
+_endpoints_cache = {}
 
 # --- General Configuration ---
-LISTEN_PORT = int(__import__("os").environ.get("PORT", 8080))
+def listen_port(env):
+    """The port to listen on: the PORT setting, 8080 when it is not set."""
+    return int(env.get("PORT", 8080))
+
+
+LISTEN_PORT = listen_port(os.environ)
 VERIFY_SSL = True
 HTTP_TIMEOUT = 10  # Timeout in seconds for all HTTP requests to IdPs
 JWKS_CACHE_TTL = 3600  # JWKS cache time-to-live in seconds (1 hour)
 
 # Module-level HTTP session — centralizes the User-Agent so IdP-side audit
-# logs (notably the Okta Change Auditor's automation classifier) can tell
-# this tool apart from generic python-requests automation, and so each
+# logs can tell this tool apart from generic python-requests automation, and so each
 # call site gets connection reuse for free.
 _session = make_session("FederatedClaimsAnalyzer", APP_VERSION)
 _session.verify = VERIFY_SSL
@@ -289,41 +268,67 @@ def get_jwks_cached(jwks_uri):
 
         return jwks
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch JWKS from {jwks_uri}: {e}")
+        logger.error(
+            f"Failed to fetch JWKS from {jwks_uri}: {describe_request_error(e)}"
+        )
         return None
 
 
+def decode_jwt(token, jwks, **checks):
+    """Verify a token's signature (RS256 only) against a JWKS and return its claims.
+
+    `checks` are PyJWT checks such as audience= and issuer=. Raises
+    jwt.PyJWTError when the token or the key set is not acceptable.
+    """
+    key_id = jwt.get_unverified_header(token).get("kid")
+    keys = jwt.PyJWKSet.from_dict(jwks).keys
+    matching = [k for k in keys if key_id is None or k.key_id == key_id]
+    if not matching:
+        raise jwt.PyJWTError("No key in the JWKS matches the token's key id.")
+    return jwt.decode(token, matching[0].key, algorithms=["RS256"], **checks)
+
+
 # --- OIDC Helper Functions ---
-def okta_oidc_get_endpoints(issuer_url):
-    global \
-        OKTA_OIDC_AUTH_ENDPOINT, \
-        OKTA_OIDC_TOKEN_ENDPOINT, \
-        OKTA_OIDC_JWKS_URI, \
-        OKTA_OIDC_USERINFO_ENDPOINT
+def discover_endpoints(issuer_url, label):
+    """Fetch the issuer's discovery document; return its endpoints, or None."""
     discovery_url = f"{issuer_url}/.well-known/openid-configuration"
-    logger.info(f"Okta OIDC: Discovering endpoints from: {discovery_url}")
+    logger.info(f"{label} OIDC: Discovering endpoints from: {discovery_url}")
     try:
         response = _session.get(discovery_url, verify=VERIFY_SSL, timeout=HTTP_TIMEOUT)
         response.raise_for_status()
         config = response.json()
-        OKTA_OIDC_AUTH_ENDPOINT, OKTA_OIDC_TOKEN_ENDPOINT = (
-            config.get("authorization_endpoint"),
-            config.get("token_endpoint"),
-        )
-        OKTA_OIDC_JWKS_URI, OKTA_OIDC_USERINFO_ENDPOINT = (
-            config.get("jwks_uri"),
-            config.get("userinfo_endpoint"),
-        )
-        return all(
-            [OKTA_OIDC_AUTH_ENDPOINT, OKTA_OIDC_TOKEN_ENDPOINT, OKTA_OIDC_JWKS_URI]
-        )
     except requests.exceptions.RequestException as e:
-        logger.error(f"Okta OIDC: Error during OIDC discovery: {e}")
-        return False
+        logger.error(
+            f"{label} OIDC: Error during OIDC discovery: {describe_request_error(e)}"
+        )
+        return None
+    endpoints = {
+        "auth": config.get("authorization_endpoint"),
+        "token": config.get("token_endpoint"),
+        "jwks_uri": config.get("jwks_uri"),
+        "userinfo": config.get("userinfo_endpoint"),
+    }
+    if not all([endpoints["auth"], endpoints["token"], endpoints["jwks_uri"]]):
+        logger.error(f"{label} OIDC: The discovery document is incomplete.")
+        return None
+    _endpoints_cache[issuer_url] = endpoints
+    return endpoints
+
+
+def endpoints_for(issuer_url, label):
+    """The issuer's endpoints from this worker's cache, discovered when absent."""
+    return _endpoints_cache.get(issuer_url) or discover_endpoints(issuer_url, label)
+
+
+def okta_oidc_get_endpoints(issuer_url):
+    return discover_endpoints(issuer_url, "Okta")
 
 
 def okta_oidc_exchange_code_for_tokens(code, okta_config, code_verifier):
     logger.info("--- Okta OIDC: Exchanging Authorization Code for Tokens ---")
+    endpoints = endpoints_for(okta_config["oidc_issuer_url"], "Okta")
+    if not endpoints:
+        return None
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     payload = {
         "grant_type": "authorization_code",
@@ -335,7 +340,7 @@ def okta_oidc_exchange_code_for_tokens(code, okta_config, code_verifier):
     }
     try:
         response = _session.post(
-            OKTA_OIDC_TOKEN_ENDPOINT,
+            endpoints["token"],
             data=payload,
             headers=headers,
             verify=VERIFY_SSL,
@@ -353,20 +358,19 @@ def okta_oidc_exchange_code_for_tokens(code, okta_config, code_verifier):
 def okta_oidc_validate_id_token(id_token, okta_config):
     logger.info("--- Okta OIDC: Validating ID Token ---")
     try:
-        jwks = get_jwks_cached(OKTA_OIDC_JWKS_URI)
+        endpoints = endpoints_for(okta_config["oidc_issuer_url"], "Okta")
+        jwks = endpoints and get_jwks_cached(endpoints["jwks_uri"])
         if not jwks:
             raise RuntimeError("Failed to fetch JWKS")
-        decoded_token = jwt.decode(
-            token=id_token,
-            key=jwks,
-            algorithms=["RS256"],
+        decoded_token = decode_jwt(
+            id_token,
+            jwks,
             audience=okta_config["oidc_client_id"],
             issuer=okta_config["oidc_issuer_url"],
-            options={"verify_at_hash": False},
         )
         logger.info("Okta OIDC: ID Token validation successful!")
         return decoded_token
-    except (JWTError, requests.exceptions.RequestException) as e:
+    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
         logger.error(f"Okta OIDC: ID Token validation failed: {e}")
         return None
 
@@ -374,29 +378,33 @@ def okta_oidc_validate_id_token(id_token, okta_config):
 def okta_oidc_validate_access_token(access_token, okta_config):
     logger.info("--- Okta OIDC: Validating Access Token ---")
     try:
-        jwks = get_jwks_cached(OKTA_OIDC_JWKS_URI)
+        endpoints = endpoints_for(okta_config["oidc_issuer_url"], "Okta")
+        jwks = endpoints and get_jwks_cached(endpoints["jwks_uri"])
         if not jwks:
             raise RuntimeError("Failed to fetch JWKS")
-        decoded_token = jwt.decode(
-            token=access_token,
-            key=jwks,
-            algorithms=["RS256"],
+        decoded_token = decode_jwt(
+            access_token,
+            jwks,
             audience=okta_config["oidc_audience"],
             issuer=okta_config["oidc_issuer_url"],
         )
         logger.info("Okta OIDC: Access Token validation successful!")
         return decoded_token
-    except (JWTError, requests.exceptions.RequestException) as e:
+    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
         logger.error(f"Okta OIDC: Access Token validation failed: {e}")
         return None
 
 
-def okta_oidc_get_userinfo_claims(access_token):
-    logger.info("--- Okta OIDC: Fetching Userinfo Claims ---")
+def fetch_userinfo(issuer_url, access_token, label):
+    """Call the issuer's userinfo endpoint; return its claims, or None."""
+    endpoints = endpoints_for(issuer_url, label)
+    if not endpoints or not endpoints["userinfo"]:
+        logger.error(f"{label} OIDC: No userinfo endpoint is known.")
+        return None
     headers = {"Authorization": f"Bearer {access_token}"}
     try:
         response = _session.get(
-            OKTA_OIDC_USERINFO_ENDPOINT,
+            endpoints["userinfo"],
             headers=headers,
             verify=VERIFY_SSL,
             timeout=HTTP_TIMEOUT,
@@ -404,67 +412,19 @@ def okta_oidc_get_userinfo_claims(access_token):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Okta OIDC: Error fetching Userinfo claims: {e}")
+        logger.error(
+            f"{label} OIDC: Error fetching Userinfo claims: {describe_request_error(e)}"
+        )
         return None
 
 
+def okta_oidc_get_userinfo_claims(access_token, okta_config):
+    logger.info("--- Okta OIDC: Fetching Userinfo Claims ---")
+    return fetch_userinfo(okta_config["oidc_issuer_url"], access_token, "Okta")
+
+
 def adfs_oidc_get_endpoints(adfs_issuer_url):
-    global \
-        ADFS_OIDC_AUTH_ENDPOINT, \
-        ADFS_OIDC_TOKEN_ENDPOINT, \
-        ADFS_OIDC_JWKS_URI, \
-        ADFS_OIDC_USERINFO_ENDPOINT
-    discovery_url = f"{adfs_issuer_url}/.well-known/openid-configuration"
-    logger.info(f"ADFS OIDC: Discovering endpoints from: {discovery_url}")
-    try:
-        response = _session.get(discovery_url, verify=VERIFY_SSL, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
-        config = response.json()
-        ADFS_OIDC_AUTH_ENDPOINT, ADFS_OIDC_TOKEN_ENDPOINT = (
-            config.get("authorization_endpoint"),
-            config.get("token_endpoint"),
-        )
-        ADFS_OIDC_JWKS_URI, ADFS_OIDC_USERINFO_ENDPOINT = (
-            config.get("jwks_uri"),
-            config.get("userinfo_endpoint"),
-        )
-        return all(
-            [ADFS_OIDC_AUTH_ENDPOINT, ADFS_OIDC_TOKEN_ENDPOINT, ADFS_OIDC_JWKS_URI]
-        )
-    except requests.exceptions.RequestException as e:
-        logger.error(f"ADFS OIDC: Error during OIDC discovery: {e}")
-        return False
-
-
-def azure_oidc_get_endpoints():
-    global \
-        AZURE_OIDC_AUTH_ENDPOINT, \
-        AZURE_OIDC_TOKEN_ENDPOINT, \
-        AZURE_OIDC_JWKS_URI, \
-        AZURE_OIDC_USERINFO_ENDPOINT
-    if not AZURE_OIDC_TENANT_ID:
-        logger.error("Azure OIDC: AZURE_OIDC_TENANT_ID is not set")
-        return False
-    discovery_url = f"https://login.microsoftonline.com/{AZURE_OIDC_TENANT_ID}/v2.0/.well-known/openid-configuration"
-    logger.info(f"Azure OIDC: Discovering endpoints from: {discovery_url}")
-    try:
-        response = _session.get(discovery_url, verify=VERIFY_SSL, timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
-        config = response.json()
-        AZURE_OIDC_AUTH_ENDPOINT, AZURE_OIDC_TOKEN_ENDPOINT = (
-            config.get("authorization_endpoint"),
-            config.get("token_endpoint"),
-        )
-        AZURE_OIDC_JWKS_URI, AZURE_OIDC_USERINFO_ENDPOINT = (
-            config.get("jwks_uri"),
-            config.get("userinfo_endpoint"),
-        )
-        return all(
-            [AZURE_OIDC_AUTH_ENDPOINT, AZURE_OIDC_TOKEN_ENDPOINT, AZURE_OIDC_JWKS_URI]
-        )
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Azure OIDC: Error during OIDC discovery: {e}")
-        return False
+    return discover_endpoints(adfs_issuer_url, "ADFS")
 
 
 def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
@@ -474,6 +434,9 @@ def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
         logger.error(
             f"ADFS OIDC: No configuration found for environment '{adfs_env_key}'"
         )
+        return None
+    endpoints = endpoints_for(ADFS_ENVIRONMENTS[adfs_env_key], "ADFS")
+    if not endpoints:
         return None
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     payload = {
@@ -486,7 +449,7 @@ def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
     }
     try:
         response = _session.post(
-            ADFS_OIDC_TOKEN_ENDPOINT,
+            endpoints["token"],
             data=payload,
             headers=headers,
             verify=VERIFY_SSL,
@@ -501,38 +464,6 @@ def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
         return None
 
 
-def azure_oidc_exchange_code_for_tokens(code, code_verifier):
-    logger.info("--- Azure OIDC: Exchanging Authorization Code for Tokens ---")
-    # Ensure endpoints are discovered (needed for multi-worker setups where callback may hit different worker)
-    if not AZURE_OIDC_TOKEN_ENDPOINT and not azure_oidc_get_endpoints():
-        logger.error("Azure OIDC: Failed to discover endpoints for token exchange")
-        return None
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    payload = {
-        "grant_type": "authorization_code",
-        "client_id": AZURE_OIDC_CLIENT_ID,
-        "client_secret": AZURE_OIDC_CLIENT_SECRET,
-        "redirect_uri": AZURE_OIDC_REDIRECT_URI,
-        "code": code,
-        "code_verifier": code_verifier,
-    }
-    try:
-        response = _session.post(
-            AZURE_OIDC_TOKEN_ENDPOINT,
-            data=payload,
-            headers=headers,
-            verify=VERIFY_SSL,
-            timeout=HTTP_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(
-            f"Azure OIDC: Error exchanging code for tokens: {describe_request_error(e)}"
-        )
-        return None
-
-
 def adfs_oidc_validate_id_token(id_token, adfs_issuer_url, adfs_env_key):
     logger.info("--- ADFS OIDC: Validating ID Token ---")
     config = ADFS_OIDC_CONFIGS.get(adfs_env_key)
@@ -542,82 +473,26 @@ def adfs_oidc_validate_id_token(id_token, adfs_issuer_url, adfs_env_key):
         )
         return None
     try:
-        jwks = get_jwks_cached(ADFS_OIDC_JWKS_URI)
+        endpoints = endpoints_for(adfs_issuer_url, "ADFS")
+        jwks = endpoints and get_jwks_cached(endpoints["jwks_uri"])
         if not jwks:
             raise RuntimeError("Failed to fetch JWKS")
-        decoded_token = jwt.decode(
-            token=id_token,
-            key=jwks,
-            algorithms=["RS256"],
+        decoded_token = decode_jwt(
+            id_token,
+            jwks,
             audience=config["client_id"],
             issuer=adfs_issuer_url,
         )
         logger.info("ADFS OIDC: ID Token validation successful!")
         return decoded_token
-    except (JWTError, requests.exceptions.RequestException) as e:
+    except (jwt.PyJWTError, requests.exceptions.RequestException) as e:
         logger.error(f"ADFS OIDC: ID Token validation failed: {e}")
         return None
 
 
-def azure_oidc_validate_id_token(id_token):
-    logger.info("--- Azure OIDC: Validating ID Token ---")
-    # Ensure endpoints are discovered (needed for multi-worker setups)
-    if not AZURE_OIDC_JWKS_URI and not azure_oidc_get_endpoints():
-        logger.error("Azure OIDC: Failed to discover endpoints for token validation")
-        return None
-    try:
-        jwks = get_jwks_cached(AZURE_OIDC_JWKS_URI)
-        if not jwks:
-            raise RuntimeError("Failed to fetch JWKS")
-        # Azure AD v2.0 tokens have issuer format: https://login.microsoftonline.com/{tenant}/v2.0
-        decoded_token = jwt.decode(
-            token=id_token,
-            key=jwks,
-            algorithms=["RS256"],
-            audience=AZURE_OIDC_CLIENT_ID,
-            issuer=AZURE_OIDC_ISSUER,
-            options={"verify_at_hash": False},
-        )
-        logger.info("Azure OIDC: ID Token validation successful!")
-        return decoded_token
-    except (JWTError, requests.exceptions.RequestException) as e:
-        logger.error(f"Azure OIDC: ID Token validation failed: {e}")
-        return None
-
-
-def adfs_oidc_get_userinfo_claims(access_token):
+def adfs_oidc_get_userinfo_claims(access_token, adfs_issuer_url):
     logger.info("--- ADFS OIDC: Fetching Userinfo Claims ---")
-    headers = {"Authorization": f"Bearer {access_token}"}
-    try:
-        response = _session.get(
-            ADFS_OIDC_USERINFO_ENDPOINT,
-            headers=headers,
-            verify=VERIFY_SSL,
-            timeout=HTTP_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"ADFS OIDC: Error fetching Userinfo claims: {e}")
-        return None
-
-
-def azure_oidc_get_userinfo_claims(access_token):
-    logger.info("--- Azure OIDC: Fetching Userinfo Claims ---")
-    headers = {"Authorization": f"Bearer {access_token}"}
-    try:
-        # Azure's userinfo endpoint is at Microsoft Graph
-        response = _session.get(
-            "https://graph.microsoft.com/oidc/userinfo",
-            headers=headers,
-            verify=VERIFY_SSL,
-            timeout=HTTP_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Azure OIDC: Error fetching Userinfo claims: {e}")
-        return None
+    return fetch_userinfo(adfs_issuer_url, access_token, "ADFS")
 
 
 def oidc_perform_token_refresh(
@@ -630,20 +505,24 @@ def oidc_perform_token_refresh(
         env_config = OKTA_ENVIRONMENTS.get(env_key)
         if env_config:
             config = env_config.get(auth_server_type, env_config.get("custom"))
+            # Discover in this worker when it has not served this issuer yet.
+            endpoints = endpoints_for(config["oidc_issuer_url"], "Okta")
             token_endpoint, client_id, client_secret, scopes = (
-                OKTA_OIDC_TOKEN_ENDPOINT,
+                endpoints and endpoints["token"],
                 config.get("oidc_client_id"),
                 config.get("oidc_client_secret"),
                 OKTA_OIDC_SCOPES,
             )
     elif idp_choice == "adfs":
         config = ADFS_OIDC_CONFIGS.get(env_key)
-        token_endpoint, client_id, client_secret, scopes = (
-            ADFS_OIDC_TOKEN_ENDPOINT,
-            config.get("client_id"),
-            config.get("client_secret"),
-            ADFS_OIDC_SCOPES,
-        )
+        if config:
+            endpoints = endpoints_for(ADFS_ENVIRONMENTS[env_key], "ADFS")
+            token_endpoint, client_id, client_secret, scopes = (
+                endpoints and endpoints["token"],
+                config.get("client_id"),
+                config.get("client_secret"),
+                ADFS_OIDC_SCOPES,
+            )
 
     if not all([token_endpoint, client_id, client_secret]):
         error_msg = f"OIDC Refresh: Configuration incomplete for {idp_choice.upper()} {env_key}."
@@ -699,7 +578,7 @@ def build_saml_request_data(req):
     is_https = "on" if forwarded_proto == "https" else "off"
 
     # If HTTPS, force port 443. If HTTP, use the actual server port (e.g. 8080)
-    # This prevents the library from constructing URLs like https://host.example.gov
+    # This prevents the library from constructing URLs like https://host.example.invalid:8080
     if is_https == "on":
         server_port = "443"
     else:
@@ -759,7 +638,8 @@ def run_okta_oidc_flow(okta_config, auth_server_type="custom", force_fresh_login
     logger.info(
         f"--- Okta OIDC Client Test Initiated (Auth Server: {auth_server_type}) ---"
     )
-    if not okta_oidc_get_endpoints(okta_config["oidc_issuer_url"]):
+    endpoints = okta_oidc_get_endpoints(okta_config["oidc_issuer_url"])
+    if not endpoints:
         return None, None, None, None
     state = os.urandom(16).hex()
     code_verifier, code_challenge = generate_pkce_pair()
@@ -775,7 +655,7 @@ def run_okta_oidc_flow(okta_config, auth_server_type="custom", force_fresh_login
     if force_fresh_login:
         auth_params["prompt"] = "login"
         auth_params["max_age"] = 0
-    authorization_url = f"{OKTA_OIDC_AUTH_ENDPOINT}?{urlencode(auth_params)}"
+    authorization_url = f"{endpoints['auth']}?{urlencode(auth_params)}"
     logger.info(
         f"Okta OIDC: Generated authorization URL for redirect with PKCE (using {auth_server_type} auth server, force_fresh_login={force_fresh_login})."
     )
@@ -784,7 +664,8 @@ def run_okta_oidc_flow(okta_config, auth_server_type="custom", force_fresh_login
 
 def run_adfs_oidc_flow(adfs_base_url, adfs_env_key, force_fresh_login=True):
     logger.info(f"--- ADFS OIDC Client Test Initiated on {adfs_base_url} ---")
-    if not adfs_oidc_get_endpoints(adfs_base_url):
+    endpoints = adfs_oidc_get_endpoints(adfs_base_url)
+    if not endpoints:
         return None, None, None, None
     state = os.urandom(16).hex()
     client_id = ADFS_OIDC_CONFIGS[adfs_env_key]["client_id"]
@@ -801,31 +682,10 @@ def run_adfs_oidc_flow(adfs_base_url, adfs_env_key, force_fresh_login=True):
     if force_fresh_login:
         auth_params["prompt"] = "login"
         auth_params["max_age"] = 0
-    authorization_url = f"{ADFS_OIDC_AUTH_ENDPOINT}?{urlencode(auth_params)}"
+    authorization_url = f"{endpoints['auth']}?{urlencode(auth_params)}"
     logger.info(
         f"ADFS OIDC: Generated authorization URL for redirect with PKCE (force_fresh_login={force_fresh_login})."
     )
-    return authorization_url, state, code_verifier, code_challenge
-
-
-def run_azure_oidc_flow():
-    logger.info("--- Azure OIDC Login Initiated ---")
-    if not azure_oidc_get_endpoints():
-        return None, None, None, None
-    state = os.urandom(16).hex()
-    code_verifier, code_challenge = generate_pkce_pair()
-    auth_params = {
-        "response_type": "code",
-        "client_id": AZURE_OIDC_CLIENT_ID,
-        "redirect_uri": AZURE_OIDC_REDIRECT_URI,
-        "scope": AZURE_OIDC_SCOPES,
-        "state": state,
-        "prompt": "select_account",
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
-    }
-    authorization_url = f"{AZURE_OIDC_AUTH_ENDPOINT}?{urlencode(auth_params)}"
-    logger.info("Azure OIDC: Generated authorization URL for redirect with PKCE.")
     return authorization_url, state, code_verifier, code_challenge
 
 
@@ -877,8 +737,8 @@ def okta_check_token_lifetimes(environment, auth_server_type="custom"):
     issuer_url = env_config.get("oidc_issuer_url", "")
 
     # Extract auth server ID from issuer URL
-    # For custom: https://host.example.gov/oauth2/{authServerId}
-    # For default: https://host.example.gov
+    # For custom: https://host.example.invalid/oauth2/{authServerId}
+    # For default: https://host.example.invalid
     if "/oauth2/" in issuer_url:
         auth_server_id = issuer_url.split("/oauth2/")[-1].rstrip("/")
     else:

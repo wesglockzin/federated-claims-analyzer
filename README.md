@@ -17,7 +17,7 @@ account, and shows you exactly what came back.
 This is a sanitized snapshot of an internal tool, published through an
 automated review-and-publish pipeline. Internal identifiers — hostnames,
 tenant names, resource names, certificates, Okta object IDs — are replaced
-with placeholders (`host.example.gov`, `your-resource-group`, a throwaway
+with placeholders (`example.invalid` hosts, a throwaway
 self-signed certificate, `0oaEXAMPLE00EXAMPLE0`). The code is the code that
 runs; the configuration values are not. Replace them with your own.
 
@@ -49,7 +49,7 @@ runs; the configuration values are not. Replace them with your own.
 
 | Path | What is verified |
 |---|---|
-| Okta / ADFS **ID token** | Signature against the IdP's JWKS (`RS256` only), `aud`, `iss`, `exp` — via `python-jose` |
+| Okta / ADFS **ID token** | Signature against the IdP's JWKS (`RS256` only), `aud`, `iss`, `exp` — via `PyJWT` |
 | Okta **access token** | Same, when the token is a JWT (custom authorization servers) |
 | **SAML response** | Signature, `strict` mode, `wantAssertionsSigned`, SHA-256 — via `python3-saml` |
 | ADFS **access token** | **Decoded without verification.** ADFS access tokens are opaque to the SP by design; the claims are shown for inspection only and are *not* trustworthy. This is labeled in the code (`verify_signature=False`). |
@@ -136,7 +136,6 @@ names it.
 | `SAML_<K>_ENTITY_ID`, `_SSO_URL`, `_CERT`, `_ENV` | per key | none | IdP entity id, SSO URL, signing certificate (PEM, `\n` for newlines), and the environment it appears under |
 | `SAML_<K>_LABEL`, `_SP_ENTITY_ID`, `_SP_CERT_FILE`, `_SP_KEY_FILE` | no | `SAML app <target>`; `SAML_SP_ENTITY_ID`; `saml_tester.cert`; `saml_tester.key` | Form label and per-IdP SP overrides |
 | `SAML_TESTER_CERT`, `SAML_TESTER_KEY` | cloud only | none | SAML signing key pair as PEM text |
-| `AZURE_OIDC_TENANT_ID`, `AZURE_OIDC_CLIENT_ID`, `AZURE_OIDC_CLIENT_SECRET` | no | none | Reserved; no route uses them yet |
 | `FORCE_FRESH_LOGIN_DEFAULT` | no | `true` | Ask the IdP for a fresh login |
 | `K_SERVICE`, `KUBERNETES_SERVICE_HOST`, `CONTAINER_APP_NAME` | set by the platform | none | When present: HSTS header, log format without timestamps, SAML key pair read from `SAML_TESTER_CERT`/`SAML_TESTER_KEY` (the first two) |
 | `SMOKE_TLS_VERIFY` | no | `true` | `smoke_test.py` only; `false` skips TLS verification |
@@ -172,16 +171,16 @@ Tests: `pip install -e ".[dev]"` then `pytest` (no network needed).
   `iss` check fails, the claims panel shows "ID Token was not provided by the
   IdP" rather than the specific validation error. The error is logged, not
   surfaced.
-- **OIDC discovery is module-global.** Under 2 workers × 4 threads, two
-  operators testing different Okta orgs at the same moment can race on the
-  discovered endpoints.
 - Every name you list in `OKTA_ENVIRONMENTS` / `ADFS_ENVIRONMENTS` needs all its
   settings, or the app does not start.
 - SAML sign-in needs an `https` `APP_BASE_URL` (see the cookie note above).
 - The SAML SP certificate loader and `saml_settings.py` read different paths
   on cloud hosts.
-- Tests cover the auth gate, redirects, state checks and IdP error paths; SAML
-  processing and token validation are not yet covered.
+- Tests cover the auth gate, redirects, state checks, IdP error paths, token
+  validation and SAML response processing (with a fake `python3-saml` object,
+  not a real signed assertion).
+- Discovered OIDC endpoints are cached per worker, keyed by issuer. A worker
+  that has not seen an issuer discovers it on the first request.
 
 ## Version
 

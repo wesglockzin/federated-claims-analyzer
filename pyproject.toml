@@ -11,7 +11,7 @@ dependencies = [
     "python-dotenv>=1.0,<2",
     "python3-saml>=1.16,<2",
     "requests>=2.31,<3",
-    "python-jose[cryptography]>=3.3,<4",
+    "PyJWT[crypto]>=2.8,<3",
     "Authlib>=1.3,<2",
     "gunicorn>=22,<24",
     "markdown>=3.5,<4",
@@ -22,6 +22,7 @@ dev = [
     "pytest>=9.0.3",
     "ruff>=0.6",
     "deptry>=0.20",
+    "cryptography>=42",  # the tests make their own RSA signing key
 ]
 
 [build-system]
@@ -40,8 +41,9 @@ pep621_dev_dependency_groups = ["dev"]
 known_first_party = ["app", "sso_tester_logic", "saml_settings", "guards", "idp_config", "http_session", "howto_page"]
 
 [tool.ruff.lint]
-# The default rules plus T20: no print for diagnostics (use logging).
-extend-select = ["T20"]
+# The default rules plus T20 (no print for diagnostics) and the error-handling
+# rules: no blind or silent exception handlers.
+extend-select = ["T20", "BLE", "S110", "S112"]
 
 [tool.deptry.per_rule_ignores]
 DEP002 = ["gunicorn"]  # run by the Dockerfile CMD, never imported

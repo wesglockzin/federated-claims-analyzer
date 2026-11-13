@@ -356,7 +356,7 @@
                                     IdP-->>Browser: 200 OK (SAMLResponse Form)
                                     deactivate IdP
 
-                                    Browser->>SP: POST /saml/acs (SAMLResponse)
+                                    Browser->>SP: POST /okta/saml/callback (SAMLResponse)
                                     activate SP
                                     
                                     {% if saml_error %}
@@ -384,7 +384,7 @@
             <p>
                 Version: {{ app_version }} | 
                 Theme: <a href="#" data-theme-switcher="light">Light</a> / <a href="#" data-theme-switcher="dark">Dark</a> | 
-                Contact: <a href="mailto:maintainer@host.example.gov">maintainer@host.example.gov</a>
+                Contact: <a href="mailto:maintainer@example.invalid">maintainer@example.invalid</a>
             </p>
         </footer>
     </main>
