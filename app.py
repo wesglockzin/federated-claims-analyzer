@@ -18,6 +18,7 @@ from jose.exceptions import JWTError  # used for ADFS access-token introspection
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 from werkzeug.middleware.proxy_fix import ProxyFix
+from guards import ConfigError, check_startup_settings, is_safe_redirect, states_match
 
 APP_DIR = Path(__file__).resolve().parent
 # Try to load local env file for development (secrets come from Secret Manager in production)
@@ -37,48 +38,43 @@ def env_flag(name, default=False):
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-AUTH_GATE_ENABLED = env_flag("APP_AUTH_GATE_ENABLED", True)
 FORCE_FRESH_LOGIN_DEFAULT = env_flag("FORCE_FRESH_LOGIN_DEFAULT", True)
 
 REQUIRED_SECRETS = [
     "OKTA_DEV_OIDC_SECRET",
     "ADFS_DEV_CLIENT_SECRET",
     "ADFS_PROD_CLIENT_SECRET",
-    "FLASK_SECRET_KEY"
 ]
-# Auth-gate OIDC secrets only required when the gate is on. If any of the
-# OIDC vars is missing we silently disable the gate (open posture) — same
-# rollback semantics as Okta Change Auditor.
+# Fail closed: without a session key and the login settings the app refuses to
+# start, unless AUTH_MODE=none is set explicitly.
+try:
+    AUTH_MODE = check_startup_settings(os.environ)
+except ConfigError as exc:
+    sys.exit(f"FATAL: {exc}")
+
+AUTH_GATE_ENABLED = AUTH_MODE == "oidc"
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER", "").rstrip("/")
 OIDC_CLIENT_ID = os.environ.get("OIDC_CLIENT_ID", "")
 OIDC_CLIENT_SECRET = os.environ.get("OIDC_CLIENT_SECRET", "")
 APP_BASE_URL = os.environ.get("APP_BASE_URL", "https://localhost:8080").rstrip("/")
 OIDC_SCOPES = "openid email profile"
-OIDC_GATE_READY = bool(OIDC_ISSUER and OIDC_CLIENT_ID and OIDC_CLIENT_SECRET)
-
-if AUTH_GATE_ENABLED and not OIDC_GATE_READY:
-    print("⚠️  WARNING: AUTH_GATE_ENABLED but OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET incomplete.")
-    print("   Auth gate will run in disabled mode (open) until configured.")
-    AUTH_GATE_ENABLED = False
-
-# Optional checks for STG and PROD secrets
-if "OKTA_STG_OIDC_SECRET" not in os.environ:
-    print("⚠️  WARNING: OKTA_STG_OIDC_SECRET is missing. Staging Okta OIDC tests will fail.")
-if "OKTA_PROD_OIDC_SECRET" not in os.environ:
-    print("⚠️  WARNING: OKTA_PROD_OIDC_SECRET is missing. Production Okta OIDC tests will fail.")
+OIDC_GATE_READY = AUTH_GATE_ENABLED
 
 missing_secrets = [secret for secret in REQUIRED_SECRETS if secret not in os.environ]
 if missing_secrets:
-    print(f"❌ FATAL ERROR: The following required environment variables are not set: {', '.join(missing_secrets)}")
-    print(f"Please ensure secrets are configured in Kubernetes or env.config file is in the '{APP_DIR}' directory.")
-    sys.exit(1)
+    sys.exit(f"FATAL: required settings are not set: {', '.join(missing_secrets)}")
 
 
-sys.path.append(str(Path(__file__).resolve().parent))
-import sso_tester_logic
-from wes_tools_docs import register_howto
+# These imports read settings at import time, so they must follow the dotenv load.
+import sso_tester_logic  # noqa: E402
+from howto_page import register_howto  # noqa: E402
 
 logger = sso_tester_logic.logger
+for _optional in ("OKTA_STG_OIDC_SECRET", "OKTA_PROD_OIDC_SECRET"):
+    if _optional not in os.environ:
+        logger.warning("%s is not set; OIDC tests for that environment will fail.", _optional)
+if not AUTH_GATE_ENABLED:
+    logger.warning("AUTH_MODE=none: the app serves every route without a login.")
 ADFS_ENVIRONMENTS = sso_tester_logic.ADFS_ENVIRONMENTS
 OKTA_ENVIRONMENTS = sso_tester_logic.OKTA_ENVIRONMENTS
 logger.info(f"App auth gate enabled: {AUTH_GATE_ENABLED}")
@@ -151,8 +147,8 @@ def add_security_headers(response):
     # Allow inline styles for Pico CSS and scripts for AJAX
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
         "font-src 'self' https://cdn.jsdelivr.net "
         "img-src 'self' data:; "
         "connect-src 'self';"
@@ -226,7 +222,7 @@ def process_and_split_claims(claims_dict):
 
 
 # In-tool documentation page (/howto), rendered from HOWTO.md via the shared
-# wes_tools_docs module. Inherits the auth gate from the @before_request hook.
+# howto_page module. Inherits the auth gate from the @before_request hook.
 register_howto(app, tool_name="Federated Identity & Claims Analyzer")
 
 
@@ -243,7 +239,7 @@ def login():
     if session.get("user"):
         return redirect(url_for("index"))
     next_url = request.args.get("next")
-    if next_url:
+    if is_safe_redirect(next_url):
         session["post_login_redirect"] = next_url
     context = {
         "app_version": sso_tester_logic.APP_VERSION,
@@ -261,7 +257,7 @@ def oidc_login():
     if not AUTH_GATE_ENABLED:
         return redirect(url_for("index"))
     next_url = request.args.get("next")
-    if next_url:
+    if is_safe_redirect(next_url):
         session["post_login_redirect"] = next_url
     redirect_uri = url_for("oidc_callback", _external=True)
     return oauth.okta.authorize_redirect(redirect_uri)
@@ -293,7 +289,9 @@ def oidc_callback():
         "idp": "okta",
         "login_time": datetime.now(timezone.utc).isoformat(),
     }
-    redirect_to = session.pop("post_login_redirect", None) or url_for("index")
+    redirect_to = session.pop("post_login_redirect", None)
+    if not is_safe_redirect(redirect_to):
+        redirect_to = url_for("index")
     return redirect(redirect_to)
 
 @app.route("/logout")
@@ -473,7 +471,7 @@ def okta_oidc_callback():
     okta_config = env_config.get(auth_server_type, env_config.get("custom")) if env_config else None
     
     try:
-        if request.args.get('state') != session.pop('oauth_state', None): raise RuntimeError("Invalid state parameter.")
+        if not states_match(request.args.get('state'), session.pop('oauth_state', None)): raise RuntimeError("Invalid state parameter.")
         if not okta_config: raise RuntimeError("Okta context not found in session.")
         code, error = request.args.get("code"), request.args.get("error")
         if error: raise RuntimeError(f"Okta error: {error} - {request.args.get('error_description')}")
@@ -490,7 +488,6 @@ def okta_oidc_callback():
         if tokens.get("refresh_token"):
             session['refresh_token'] = tokens.get("refresh_token")
             session['idp_context_for_refresh'] = {'idp': 'okta', 'env': selected_env, 'auth_server_type': auth_server_type}
-
         if result_data['raw_id_token']:
             imp, det = process_and_split_claims(sso_tester_logic.okta_oidc_validate_id_token(result_data['raw_id_token'], okta_config))
             result_data['oidc_imp_claims'], result_data['oidc_det_claims'] = imp, det
@@ -518,7 +515,7 @@ def adfs_oidc_callback():
     test_timestamp = datetime.now(timezone.utc).astimezone().strftime('%b %d %Y, %I:%M:%S %p %Z')
     selected_env = session.get('adfs_env_key')
     try:
-        if request.args.get('state') != session.pop('oauth_state', None): raise RuntimeError("Invalid state parameter.")
+        if not states_match(request.args.get('state'), session.pop('oauth_state', None)): raise RuntimeError("Invalid state parameter.")
         code, error = request.args.get("code"), request.args.get("error")
         if error: raise RuntimeError(f"ADFS error: {error} - {request.args.get('error_description')}")
         if not code: raise ValueError("No authorization code received.")
@@ -574,7 +571,7 @@ def refresh_token():
         if not refresh_token_val or not idp_context:
             raise RuntimeError("Refresh token or IdP context not found in session.")
 
-        refresh_response = sso_tester_logic.oidc_perform_token_refresh(refresh_token_val, idp_context['idp'], idp_context['env'])
+        refresh_response = sso_tester_logic.oidc_perform_token_refresh(refresh_token_val, idp_context['idp'], idp_context['env'], idp_context.get('auth_server_type', 'custom'))
         
         if refresh_response.get("error"):
             raise RuntimeError(f"IdP Error: {refresh_response.get('error_description') or refresh_response.get('error')}")

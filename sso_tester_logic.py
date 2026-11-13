@@ -25,7 +25,7 @@ import xml.dom.minidom
 
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 import saml_settings
-from wes_tools_http import make_session
+from http_session import make_session
 
 APP_VERSION = "7.3.8"
 
@@ -36,11 +36,6 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # This allows the app to switch between localhost and Cloud Run automatically
 # via the APP_BASE_URL environment variable.
 BASE_URL = os.environ.get("APP_BASE_URL", "https://localhost:8080").rstrip('/')
-
-# --- File Names and Directory for Output ---
-LOG_DIRECTORY = SCRIPT_DIR / "logs"
-LOG_FILENAME = "federated_claims_analyzer.log"
-LOG_FILEPATH = LOG_DIRECTORY / LOG_FILENAME
 
 # --- ADFS Environment Presets ---
 ADFS_ENVIRONMENTS = {
@@ -154,15 +149,7 @@ logger.setLevel(logging.INFO)
 if logger.hasHandlers():
     logger.handlers.clear()
 
-# File logging: Only in local dev (cloud platforms have ephemeral filesystems)
-if not IS_CLOUD:
-    if not os.path.exists(LOG_DIRECTORY):
-        os.makedirs(LOG_DIRECTORY)
-    file_handler = logging.FileHandler(LOG_FILEPATH, mode='a')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-
-# Stdout logging: Always enabled (cloud platforms capture stdout)
+# Logs go to stdout only (container platforms capture it)
 stream_handler = logging.StreamHandler(sys.stdout)
 if IS_CLOUD:
     # Structured format for Cloud Logging
@@ -196,7 +183,6 @@ def load_saml_certs_from_secrets():
         return
 
     # Write to /tmp/ (Cloud Run's writable filesystem)
-    import tempfile
     tmp_cert = Path('/tmp') / 'saml_tester.cert'
     tmp_key = Path('/tmp') / 'saml_tester.key'
 
@@ -218,6 +204,17 @@ def load_saml_certs_from_secrets():
 
 # Load SAML certs at module import (happens once at startup)
 load_saml_certs_from_secrets()
+
+def describe_request_error(exc):
+    """Describe a requests error; an HTTP error keeps its status and body.
+
+    A requests Response is falsy for 4xx/5xx, so test `is None`, not truthiness.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return str(exc)
+    return f"HTTP {response.status_code}: {response.text}"
+
 
 # --- PKCE Helper Functions ---
 def generate_pkce_pair():
@@ -291,7 +288,7 @@ def okta_oidc_exchange_code_for_tokens(code, okta_config, code_verifier):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Okta OIDC: Error exchanging code for tokens: {e.response.text if e.response else e}")
+        logger.error(f"Okta OIDC: Error exchanging code for tokens: {describe_request_error(e)}")
         return None
 
 def okta_oidc_validate_id_token(id_token, okta_config):
@@ -377,7 +374,7 @@ def adfs_oidc_exchange_code_for_tokens(code, adfs_env_key, code_verifier):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"ADFS OIDC: Error exchanging code for tokens: {e.response.text if e.response else e}")
+        logger.error(f"ADFS OIDC: Error exchanging code for tokens: {describe_request_error(e)}")
         return None
 
 def azure_oidc_exchange_code_for_tokens(code, code_verifier):
@@ -401,7 +398,7 @@ def azure_oidc_exchange_code_for_tokens(code, code_verifier):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Azure OIDC: Error exchanging code for tokens: {e.response.text if e.response else e}")
+        logger.error(f"Azure OIDC: Error exchanging code for tokens: {describe_request_error(e)}")
         return None
 
 def adfs_oidc_validate_id_token(id_token, adfs_issuer_url, adfs_env_key):
@@ -496,8 +493,19 @@ def oidc_perform_token_refresh(refresh_token, idp_choice, env_key, auth_server_t
         logger.info(f"{idp_choice.upper()} OIDC: Token refresh successful.")
         return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"{idp_choice.upper()} OIDC: Error during token refresh: {e.response.text if e.response else e}")
-        return e.response.json() if e.response else {"error": "request_error", "error_description": str(e)}
+        logger.error(f"{idp_choice.upper()} OIDC: Error during token refresh: {describe_request_error(e)}")
+        if e.response is None:
+            return {"error": "request_error", "error_description": str(e)}
+        try:
+            body = e.response.json()
+        except ValueError:
+            body = None
+        if isinstance(body, dict) and body.get("error"):
+            return body
+        return {
+            "error": "http_error",
+            "error_description": f"HTTP {e.response.status_code}: {e.response.text}",
+        }
 
 # --- SAML v2.0 Functions ---
 def build_saml_request_data(req):

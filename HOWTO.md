@@ -22,7 +22,7 @@ Built for debugging federation flows: *"what does the SAML response actually con
 
 ## Quick start — 30 seconds
 
-1. Sign in (work email; on VPN)
+1. Sign in (work email)
 2. Pick the IdP you want to test (Okta / ADFS / Azure)
 3. Pick the protocol (SAML or OIDC)
 4. Click "Run test"
@@ -127,7 +127,7 @@ Browser ───▶ Flask app (ACA)
 JWKS keys (used to verify OIDC ID token signatures) are cached for `JWKS_CACHE_TTL=3600` seconds (1 hour) to avoid hammering the IdP's well-known endpoint on every test. The cache is per-JWKS-URI.
 
 ### Identity
-Calls IdPs as **`FederatedClaimsAnalyzer/<version> (internal-tools)`** via the shared `wes_tools_http.make_session()` helper. Same session is reused across all calls in the flow.
+Calls IdPs as **`FederatedClaimsAnalyzer/<version>`** via the `http_session.make_session()` helper. Same session is reused across all calls in the flow.
 
 ### SP cert
 The tool's own SAML signing keypair lives in `saml_tester.cert` / `saml_tester.key`. The IdPs trust this cert because we've configured each Okta/ADFS test app to expect signed requests from it.
@@ -158,9 +158,9 @@ The test signs in as YOU, generates real auth events in the IdP's log, and creat
 - **SP signing keypair:** `saml_tester.cert` / `saml_tester.key`, mounted into the image at build time
 - **OIDC stack:** `authlib` for IdP-side OAuth, `python-jose` for JWT validation, `python-jwt`-style JWKS fetching
 - **SAML stack:** `python3-saml` (OneLogin's library) for AuthnRequest construction, signature validation, assertion parsing
-- **HTTP identity:** `FederatedClaimsAnalyzer/<APP_VERSION> (internal-tools)` UA via `wes_tools_http.make_session()` — module-level `_session` reused across all calls in a flow
+- **HTTP identity:** `FederatedClaimsAnalyzer/<APP_VERSION>` UA via `http_session.make_session()` — module-level `_session` reused across all calls in a flow
 - **JWKS caching:** in-memory dict keyed by JWKS URI, 1-hour TTL
-- **In-tool docs:** this page renders from `HOWTO.md` next to `app.py`, via `wes_tools_docs.register_howto()`
+- **In-tool docs:** this page renders from `HOWTO.md` next to `app.py`, via `howto_page.register_howto()`
 - **Source:** `<internal-source-path>`
 
 ## What's not here yet

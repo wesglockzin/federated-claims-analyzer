@@ -31,8 +31,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-APP_URL = "https://federated-claims-analyzer.your-env.eastus.azurecontainerapps.io"
-
 # ---------------------------------------------------------------------------
 # Terminal output helpers
 # ---------------------------------------------------------------------------
@@ -77,32 +75,31 @@ def check_syntax() -> bool:
 
 def check_requirements() -> bool:
     """
-    Verify requirements.txt exists and lists the packages this app depends on.
+    Verify pyproject.toml exists and lists the packages this app depends on.
     Does NOT check whether packages are installed locally — the Docker build
-    (az acr build) is the authoritative test for that.
+    is the authoritative test for that.
     """
-    _info("Checking requirements.txt content...")
-    req = SCRIPT_DIR / "requirements.txt"
+    _info("Checking pyproject.toml content...")
+    req = SCRIPT_DIR / "pyproject.toml"
     if not req.exists():
-        _fail("requirements.txt not found")
+        _fail("pyproject.toml not found")
         return False
 
     content = req.read_text().lower()
     expected = ["flask", "requests", "python3-saml", "gunicorn", "python-dotenv", "authlib"]
     missing = [p for p in expected if p not in content]
     if missing:
-        _fail(f"requirements.txt missing entries: {', '.join(missing)}")
+        _fail(f"pyproject.toml missing entries: {', '.join(missing)}")
         return False
 
-    _ok("requirements.txt contains all expected packages")
+    _ok("pyproject.toml contains all expected packages")
     return True
 
 
 def check_dockerfile() -> bool:
     """
     Verify Dockerfile exists and contains the minimum expected directives.
-    Accepts any base image (including ACR-hosted mirrors like
-    your-acr-name.azurecr.io/python:3.11-slim).
+    Accepts any base image.
     """
     _info("Checking Dockerfile...")
     dockerfile = SCRIPT_DIR / "Dockerfile"
@@ -136,7 +133,7 @@ def check_structure() -> bool:
         "app.py":              50,
         "sso_tester_logic.py": 50,
         "saml_settings.py":    50,
-        "requirements.txt":    10,
+        "pyproject.toml":      10,
         "Dockerfile":          10,
         "README.md":           20,
         "HOWTO.md":            20,
@@ -164,19 +161,18 @@ def check_structure() -> bool:
 
 def _ssl_context():
     """
-    Build an SSL context for post-deploy health checks.
-
-    the VPN client performs TLS inspection and Python 3.12+ enforces stricter
-    certificate validation (requires Authority Key Identifier extension) that
-    intercept certificates may not satisfy. For a reachability health check this
-    isn't the security boundary — the app's own TLS is managed by Azure Container
-    Apps. We disable verification here and warn so the operator knows why.
+    Build an SSL context for post-deploy checks. Certificates are verified
+    unless the operator sets SMOKE_TLS_VERIFY=false (for example behind a
+    TLS-inspecting proxy), in which case a warning is printed.
     """
+    import os
     import ssl
-    _warn("SSL verification disabled for post-deploy checks (VPN/TLS inspection environment)")
+
     ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    if os.environ.get("SMOKE_TLS_VERIFY", "true").strip().lower() in {"0", "false", "no"}:
+        _warn("SSL verification disabled for post-deploy checks (SMOKE_TLS_VERIFY=false)")
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
 
@@ -237,14 +233,14 @@ def check_oidc_redirect(base_url: str) -> bool:
     directly triggers the authorization redirect without requiring an existing session.
     """
     url = f"{base_url.rstrip('/')}/oidc/login"
-    _info(f"Checking PROD Okta OIDC redirect: {url}")
+    _info(f"Checking OIDC redirect: {url}")
     try:
         status, location = _http_get(url, follow_redirects=False)
-        if status == 302 and "example.gov" in location:
-            _ok("PROD Okta OIDC redirect is functional")
+        if status == 302 and location.startswith("https://"):
+            _ok("OIDC redirect is functional")
             return True
         _fail(
-            f"Expected 302 → example.gov, "
+            f"Expected 302 → an https IdP URL, "
             f"got HTTP {status} → {location or '(no Location header)'}"
         )
         return False
@@ -294,12 +290,7 @@ def main() -> int:
     parser.add_argument(
         "--post-deploy",
         metavar="URL",
-        nargs="?",
-        const=APP_URL,
-        help=(
-            f"Run post-deployment HTTP checks against the live Container App. "
-            f"Defaults to {APP_URL} if URL is omitted."
-        ),
+        help="Run post-deployment HTTP checks against the deployed app at URL.",
     )
     args = parser.parse_args()
 
@@ -307,13 +298,13 @@ def main() -> int:
         url = args.post_deploy.rstrip("/")
         checks = [
             ("App reachable",       lambda: check_app_reachable(url)),
-            ("Azure AD OIDC redirect", lambda: check_oidc_redirect(url)),
+            ("OIDC redirect", lambda: check_oidc_redirect(url)),
         ]
         success = _run_suite("POST-DEPLOY CHECKS", checks)
     else:
         checks = [
             ("Python syntax",      check_syntax),
-            ("requirements.txt",   check_requirements),
+            ("pyproject.toml",     check_requirements),
             ("Dockerfile",         check_dockerfile),
             ("Project structure",  check_structure),
         ]

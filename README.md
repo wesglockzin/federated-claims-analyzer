@@ -63,8 +63,11 @@ runs; the configuration values are not. Replace them with your own.
 | `saml_settings.py` | Per-IdP SAML settings for `python3-saml` (entity IDs, SSO URLs, certificates) |
 | `index.html`, `login.html` | Templates (served from the app directory) |
 | `HOWTO.md` | In-app help, rendered at `/howto` |
+| `guards.py` | Startup settings check, redirect validation, OAuth state compare |
+| `http_session.py`, `howto_page.py` | HTTP session factory; `/howto` page |
+| `tests/` | pytest suite (no network) |
 | `smoke_test.py` | Pre-deploy static checks and post-deploy reachability checks |
-| `Dockerfile` | Container image (gunicorn, 2 workers × 4 threads) |
+| `Dockerfile`, `docker-compose.yml` | Container image (gunicorn, 2 workers × 4 threads) and `docker compose up` |
 
 ## Routes
 
@@ -87,25 +90,30 @@ The app is gated by its own **Okta OIDC** client (authorization code + PKCE,
 assignment on that Okta application — there is no in-app allowlist.
 
 Set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and `APP_BASE_URL`.
-**If they are not set, the gate is disabled and the app serves open** — that
-is intended for local development only; see *Known limitations*.
+**The app refuses to start without them** (and without `FLASK_SECRET_KEY`),
+unless you set `AUTH_MODE=none` explicitly. `AUTH_MODE=none` serves every
+route without a login; use it for local development only.
 
 ## Configuration
 
-Everything is environment variables (locally via `env.config`, which is never
-committed; in Azure Container Apps via secrets injected as env vars).
+**Type:** web service (Flask, served by gunicorn). Everything is an
+environment variable; `.env.example` lists them all. Locally the app also
+reads `env.config` if present (never committed).
 
-| Variable | Required | Purpose |
-|---|---|---|
-| `FLASK_SECRET_KEY` | yes | Session signing — must be identical across workers |
-| `OKTA_DEV_OIDC_SECRET` | yes | Okta DEV client secret for the tester's OIDC app |
-| `OKTA_STG_OIDC_SECRET`, `OKTA_PROD_OIDC_SECRET` | no | Same for STG / PROD (their tests fail without them) |
-| `ADFS_DEV_CLIENT_SECRET`, `ADFS_PROD_CLIENT_SECRET` | yes | ADFS OIDC client secrets |
-| `OKTA_DEV_API_TOKEN`, `OKTA_PROD_API_TOKEN` | for TLC | Read-only API tokens for the Token Lifetime Check |
-| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | for the gate | The tool's own sign-in |
-| `APP_BASE_URL` | yes | Public base URL; used to build redirect URIs and cookie flags |
-| `APP_AUTH_GATE_ENABLED` | no | Default `true` |
-| `FORCE_FRESH_LOGIN_DEFAULT` | no | Default `true` |
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `FLASK_SECRET_KEY` | yes | none | Session signing — must be identical across workers |
+| `AUTH_MODE` | no | `oidc` | `oidc` or `none` (no login; local development only) |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | when `AUTH_MODE=oidc` | none | The tool's own sign-in |
+| `OKTA_DEV_OIDC_SECRET` | yes | none | Okta DEV client secret for the tester's OIDC app |
+| `OKTA_STG_OIDC_SECRET`, `OKTA_PROD_OIDC_SECRET` | no | none | Same for STG / PROD (their tests fail without them) |
+| `ADFS_DEV_CLIENT_SECRET`, `ADFS_PROD_CLIENT_SECRET` | yes | none | ADFS OIDC client secrets |
+| `OKTA_DEV_API_TOKEN`, `OKTA_PROD_API_TOKEN` | for TLC | none | Read-only API tokens for the Token Lifetime Check |
+| `APP_BASE_URL` | no | `https://localhost:8080` | Public base URL; used to build redirect URIs and cookie flags |
+| `PORT` | no | `8080` | Port the server listens on |
+| `SAML_TESTER_CERT`, `SAML_TESTER_KEY` | cloud only | none | SAML signing key pair as PEM text |
+| `FORCE_FRESH_LOGIN_DEFAULT` | no | `true` | Ask the IdP for a fresh login |
+| `SMOKE_TLS_VERIFY` | no | `true` | `smoke_test.py` only; `false` skips TLS verification |
 
 IdP endpoints (issuer URLs, SAML SSO URLs, entity IDs, signing certificates)
 live in `sso_tester_logic.py` and `saml_settings.py`. In this snapshot they
@@ -115,24 +123,19 @@ sits next to the app and is not committed.
 ## Running it
 
 ```bash
-pip install -r requirements.txt
-cp env.config.template env.config   # fill in values
-python app.py                       # HTTPS on :8080 using the SP keypair as the dev cert
+cp .env.example .env    # fill in values
+docker compose up       # serves on http://localhost:8080
 ```
 
-Deployment is Azure Container Apps. Images are built and promoted by the
-fleet's shared scripts — build → DEV, then a digest-gated DEV → PROD
-promotion — rather than by a per-tool deploy script. `smoke_test.py` runs
-static checks before a build and reachability checks after.
+Without Docker: `pip install -e .`, copy `.env.example` to `env.config`, then
+`python app.py` (HTTPS on `PORT`, using the SP keypair as the dev cert).
+Tests: `pip install -e ".[dev]"` then `pytest` (no network needed).
+
+`smoke_test.py` runs static checks before a build, and with
+`--post-deploy <url>` reachability checks after.
 
 ## Known limitations
 
-Honest list — these are real and on the roadmap, roughly in this order.
-
-- **Gate fails open when unconfigured.** Missing `OIDC_*` disables the sign-in
-  gate with a log warning instead of refusing to start. Fine on a laptop,
-  wrong on an internet-facing deployment; a fail-closed startup check is the
-  next change.
 - **Tokens live in the session cookie.** Raw ID/access/refresh tokens and the
   pretty-printed SAML response are stored in Flask's signed (not encrypted)
   cookie so results survive the redirect. Large SAML responses can push the
@@ -145,8 +148,12 @@ Honest list — these are real and on the roadmap, roughly in this order.
 - **OIDC discovery is module-global.** Under 2 workers × 4 threads, two
   operators testing different Okta orgs at the same moment can race on the
   discovered endpoints.
-- `/login?next=` is not restricted to same-origin paths.
-- No automated tests beyond `smoke_test.py`; no CI yet.
+- IdP presets, SAML IdPs and the DEV/STG/PROD names are still fixed in code.
+- Okta/ADFS secrets for DEV and PROD are required even when unused.
+- The SAML SP certificate loader and `saml_settings.py` read different paths
+  on cloud hosts.
+- Tests cover the auth gate, redirects, state checks and IdP error paths; SAML
+  processing and token validation are not yet covered.
 
 ## Version
 

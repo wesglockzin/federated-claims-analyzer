@@ -1,0 +1,10 @@
+title = "federated-claims-analyzer"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Plainly fake values used by the tests"
+regexes = [
+  '''test-[a-z]+-not-real''',
+]

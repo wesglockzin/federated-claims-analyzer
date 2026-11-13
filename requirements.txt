@@ -1,8 +1,0 @@
-flask
-python-dotenv
-python3-saml
-requests
-python-jose[cryptography]
-Authlib
-gunicorn
-markdown>=3.5
